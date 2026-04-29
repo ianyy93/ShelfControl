@@ -1,0 +1,139 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 3. Global Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // 2. Validation Blueprints
+    function isValidGroceryList(data) {
+      let requiredFields = ['name', 'ownerId', 'members', 'createdAt', 'updatedAt'];
+      return data.keys().hasAll(requiredFields)
+        && data.keys().size() == requiredFields.size()
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.ownerId is string && data.ownerId.size() > 0 && data.ownerId.size() <= 128
+        && data.members is list && data.members.size() > 0 && data.members.size() <= 20
+        && data.members[0] is string
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidGroceryItem(data) {
+      let requiredFields = ['name', 'category', 'inventoryQuantity', 'shoppingQuantity', 'listId', 'creatorId', 'createdAt', 'updatedAt'];
+      return data.keys().hasAll(requiredFields) 
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.category is string && data.category.size() > 0 && data.category.size() <= 100
+        && data.inventoryQuantity is number
+        && (!('inventoryEntries' in data) || data.inventoryEntries is list)
+        && data.shoppingQuantity is number
+        && (!('unprocessedQuantity' in data) || data.unprocessedQuantity is number)
+        && (!('unit' in data) || (data.unit is string && data.unit.size() <= 50))
+        && (!('locations' in data) || (data.locations is list && data.locations.size() <= 10 && (data.locations.size() == 0 || data.locations[0] is string)))
+        && (!('priceHistory' in data) || data.priceHistory is list)
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000))
+        && data.listId is string && data.listId.size() > 0 && data.listId.size() <= 128
+        && data.creatorId is string && data.creatorId.size() > 0 && data.creatorId.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // 1. The Master Gate (Relational Sync)
+    match /lists/{listId} {
+      
+      allow get: if isVerified();
+      allow list: if isVerified() && request.auth.uid in resource.data.members;
+
+      allow create: if isVerified()
+        && isValidId(listId)
+        && isValidGroceryList(incoming())
+        && incoming().ownerId == request.auth.uid
+        && request.auth.uid in incoming().members
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isVerified()
+        && isValidId(listId)
+        && isValidGroceryList(incoming())
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Existing member updating name
+          (request.auth.uid in existing().members && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'updatedAt'])) ||
+          // Owner updating members or name
+          (request.auth.uid == existing().ownerId && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'members', 'updatedAt'])) ||
+          // New member adding themselves (Capability URL)
+          (!(request.auth.uid in existing().members) 
+            && incoming().diff(existing()).affectedKeys().hasOnly(['members', 'updatedAt'])
+            && incoming().members.size() == existing().members.size() + 1
+            && incoming().members.hasAll(existing().members)
+            && request.auth.uid in incoming().members
+          )
+        );
+
+      allow delete: if isVerified()
+        && isValidId(listId)
+        && request.auth.uid == existing().ownerId;
+        
+      match /items/{itemId} {
+
+        function isListMember() {
+          return request.auth.uid in get(/databases/$(database)/documents/lists/$(listId)).data.members;
+        }
+
+        allow read, list: if isVerified() && isListMember();
+
+        allow create: if isVerified()
+          && isValidId(listId)
+          && isValidId(itemId)
+          && isListMember()
+          && isValidGroceryItem(incoming())
+          && incoming().listId == listId
+          && incoming().creatorId == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+
+        // Any member can update an item
+        allow update: if isVerified()
+          && isValidId(listId)
+          && isValidId(itemId)
+          && isListMember()
+          && isValidGroceryItem(incoming())
+          && incoming().listId == existing().listId
+          && incoming().creatorId == existing().creatorId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'inventoryQuantity', 'inventoryEntries', 'shoppingQuantity', 'unprocessedQuantity', 'unit', 'locations', 'priceHistory', 'notes', 'updatedAt']);
+
+        allow delete: if isVerified()
+          && isValidId(listId)
+          && isValidId(itemId)
+          && isListMember();
+      }
+    }
+  }
+}

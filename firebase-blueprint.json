@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "GroceryList": {
+      "title": "GroceryList",
+      "description": "A shared list of groceries.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "members": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["name", "ownerId", "members", "createdAt", "updatedAt"]
+    },
+    "GroceryItem": {
+      "title": "GroceryItem",
+      "description": "An item in the user's pantry or shopping list.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "inventoryQuantity": { "type": "number" },
+        "inventoryEntries": { 
+          "type": "array", 
+          "items": { 
+            "type": "object", 
+            "properties": {
+              "id": { "type": "string" },
+              "location": { "type": "string" },
+              "quantity": { "type": "number" },
+              "amount": { "type": "number" },
+              "unit": { "type": "string" },
+              "expiryDate": { "type": "string" },
+              "label": { "type": "string" },
+              "tags": { "type": "array", "items": { "type": "string" } }
+            } 
+          }
+        },
+        "shoppingQuantity": { "type": "number" },
+        "unprocessedQuantity": { "type": "number" },
+        "unit": { "type": "string" },
+        "locations": { "type": "array", "items": { "type": "string"} },
+        "notes": { "type": "string" },
+        "listId": { "type": "string" },
+        "creatorId": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["name", "category", "inventoryQuantity", "shoppingQuantity", "listId", "creatorId", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/lists/{listId}": {
+      "schema": { "$ref": "#/entities/GroceryList" },
+      "description": "Shared list of items."
+    },
+    "/lists/{listId}/items/{itemId}": {
+      "schema": { "$ref": "#/entities/GroceryItem" },
+      "description": "Grocery and pantry items for the list."
+    }
+  }
+}
