@@ -22,7 +22,8 @@ export function ReceiveStockDialog({ open, onOpenChange, item, defaultAmount = 1
 
   useEffect(() => {
     if (open && item) {
-      setEntries([{ location: item.locations?.[0] || item.location || "", quantity: defaultAmount, unit: item.unit }]);
+      const today = new Date().toISOString().split('T')[0];
+      setEntries([{ location: item.locations?.[0] || item.location || "", quantity: defaultAmount, unit: item.unit, dateBought: today, dateAdded: today }]);
       setCheckOffAmount(defaultAmount);
     } else {
       setEntries([]);
@@ -31,7 +32,14 @@ export function ReceiveStockDialog({ open, onOpenChange, item, defaultAmount = 1
   }, [open, item, defaultAmount]);
 
   const addEntry = () => {
-    setEntries([...entries, { location: entries[0]?.location || "", quantity: 1, unit: item?.unit || "" }]);
+    const today = new Date().toISOString().split('T')[0];
+    setEntries([...entries, { 
+      location: entries[0]?.location || "", 
+      quantity: 1, 
+      unit: item?.unit || "",
+      dateBought: today,
+      dateAdded: today
+    }]);
   };
 
   const removeEntry = (index: number) => {
@@ -61,6 +69,16 @@ export function ReceiveStockDialog({ open, onOpenChange, item, defaultAmount = 1
           <DialogTitle>Add {item.name} to Inventory</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 pt-4 max-h-[80vh] overflow-y-auto px-1">
+          <datalist id="receive-locations-list">
+            {locations.map(loc => (
+              <option key={loc} value={loc} />
+            ))}
+          </datalist>
+          <datalist id="units-list">
+            {["g", "kg", "ml", "L", "oz", "lb", "unit", "pack", "bottle", "can", "box", "bag"].map(u => (
+              <option key={u} value={u} />
+            ))}
+          </datalist>
           <div className="space-y-3">
              <div className="flex justify-between items-center">
                <Label>Inventory Pieces</Label>
@@ -91,11 +109,6 @@ export function ReceiveStockDialog({ open, onOpenChange, item, defaultAmount = 1
                        className="h-8 text-sm"
                        required
                      />
-                     <datalist id="receive-locations-list">
-                        {locations.map(loc => (
-                          <option key={loc} value={loc} />
-                        ))}
-                      </datalist>
                    </div>
                    <div className="space-y-1.5">
                      <Label className="text-xs">Quantity (Count)</Label>
@@ -151,6 +164,15 @@ export function ReceiveStockDialog({ open, onOpenChange, item, defaultAmount = 1
                        />
                     </div>
                     <div className="space-y-1.5">
+                        <Label className="text-xs text-gray-500">Date Bought</Label>
+                        <Input 
+                          type="date" 
+                          value={entry.dateBought || entry.dateAdded || ""} 
+                          onChange={e => updateEntry(index, 'dateBought', e.target.value)} 
+                          className="h-8 text-sm text-gray-600 px-1"
+                        />
+                    </div>
+                    <div className="space-y-1.5 col-span-2 lg:col-span-4">
                         <Label className="text-xs text-gray-500">Tags</Label>
                         <Input 
                           type="text" 

@@ -1,8 +1,9 @@
+import { motion, AnimatePresence } from "motion/react";
 import { useEffect, useState, useMemo } from "react";
 import { auth, db, signIn, signOut, handleFirestoreError } from "./lib/firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { collection, onSnapshot, query, addDoc, serverTimestamp, doc, deleteDoc, updateDoc, where, getDoc, arrayUnion } from "firebase/firestore";
-import { GroceryItem, GroceryList, CATEGORIES, InventoryEntry, PRESET_LOCATIONS } from "./types";
+import { GroceryItem, GroceryList, CATEGORIES, InventoryEntry, PRESET_LOCATIONS, PriceEntry } from "./types";
 import { Button } from "./components/ui/button";
 import { Plus, LogOut, Trash2, Edit, ShoppingCart, Archive, Check, Minus, Users, Link as LinkIcon, LineChart } from "lucide-react";
 import { ItemDialog } from "./components/ItemDialog";
@@ -33,9 +34,10 @@ export default function App() {
     setExpandedItems(prev => ({ ...prev, [id]: override !== undefined ? override : !prev[id] }));
   };
 
-  // View Options for Inventory
+  // View Options for All Tabs
+  const [isFilterExpanded, setIsFilterExpanded] = useState(false);
   const [groupBy, setGroupBy] = useState<'category' | 'location'>('category');
-  const [sortBy, setSortBy] = useState<'name' | 'quantity' | 'expiryDate'>('name');
+  const [sortBy, setSortBy] = useState<'name' | 'quantity' | 'expiryDate' | 'dateBought' | 'dateAdded'>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [filterCat, setFilterCat] = useState<string>('All');
   const [filterLoc, setFilterLoc] = useState<string>('All');
@@ -146,37 +148,65 @@ export default function App() {
     return () => unsubscribe();
   }, [user, activeListId]);
 
-  const handleSaveItem = async (updatedFields: Partial<GroceryItem>) => {
+  const handleSaveItem = async (data: Partial<GroceryItem> & { newPriceEntry?: Omit<PriceEntry, 'id'> }) => {
     if (!user || !activeListId) return;
+    const { newPriceEntry, ...updatedFields } = data;
+    
     try {
       if (editingItem?.id) {
-        await updateDoc(doc(db, "lists", activeListId, "items", editingItem.id), {
+        const updateData: Partial<GroceryItem> = {
           ...updatedFields,
           updatedAt: serverTimestamp()
-        });
+        };
+        if (newPriceEntry) {
+          updateData.priceHistory = arrayUnion({
+            ...newPriceEntry,
+            id: crypto.randomUUID()
+          }) as unknown as PriceEntry[];
+        }
+        await updateDoc(doc(db, "lists", activeListId, "items", editingItem.id), updateData);
       } else {
         const existingMatch = items.find(i => i.name.toLowerCase().trim() === updatedFields.name?.toLowerCase().trim());
         if (existingMatch && existingMatch.id) {
            const newEntries = [...(existingMatch.inventoryEntries || []), ...(updatedFields.inventoryEntries || [])];
            const newLocs = Array.from(new Set(newEntries.map(e => e.location).filter(Boolean)));
-           await updateDoc(doc(db, "lists", activeListId, "items", existingMatch.id), {
+           
+           const updateData: Partial<GroceryItem> = {
                category: updatedFields.category,
-               shoppingQuantity: existingMatch.shoppingQuantity + (updatedFields.shoppingQuantity || 0),
-               inventoryQuantity: existingMatch.inventoryQuantity + (updatedFields.inventoryQuantity || 0),
+               shoppingQuantity: (existingMatch.shoppingQuantity || 0) + (updatedFields.shoppingQuantity || 0),
+               inventoryQuantity: (existingMatch.inventoryQuantity || 0) + (updatedFields.inventoryQuantity || 0),
                inventoryEntries: newEntries,
                locations: newLocs,
                notes: [existingMatch.notes, updatedFields.notes].filter(Boolean).join("\n"),
                unit: updatedFields.unit || existingMatch.unit,
                updatedAt: serverTimestamp()
-           });
+           };
+
+           if (newPriceEntry) {
+             updateData.priceHistory = arrayUnion({
+               ...newPriceEntry,
+               id: crypto.randomUUID()
+             }) as unknown as PriceEntry[];
+           }
+
+           await updateDoc(doc(db, "lists", activeListId, "items", existingMatch.id), updateData);
         } else {
-           await addDoc(collection(db, "lists", activeListId, "items"), {
+           const newItem: Partial<GroceryItem> = {
              ...updatedFields,
              listId: activeListId,
              creatorId: user.uid,
              createdAt: serverTimestamp(),
              updatedAt: serverTimestamp()
-           });
+           };
+
+           if (newPriceEntry) {
+             newItem.priceHistory = [{
+               ...newPriceEntry,
+               id: crypto.randomUUID()
+             }];
+           }
+
+           await addDoc(collection(db, "lists", activeListId, "items"), newItem as GroceryItem);
         }
       }
       setIsDialogOpen(false);
@@ -207,13 +237,18 @@ export default function App() {
     if (invDelta > 0) {
       const defaultLoc = item.location || item.locations?.[0] || 'Unassigned';
       const entry = newEntries.find(e => !e.label && !e.expiryDate && e.location === defaultLoc);
+      const today = new Date().toISOString().split('T')[0];
       if (entry) {
         entry.quantity += invDelta;
+        entry.dateBought = today;
+        entry.dateAdded = entry.dateAdded || today;
       } else {
         newEntries.push({
           id: Math.random().toString(36).substr(2, 9),
           location: defaultLoc,
-          quantity: invDelta
+          quantity: invDelta,
+          dateBought: today,
+          dateAdded: today
         });
       }
     } else if (invDelta < 0) {
@@ -244,6 +279,19 @@ export default function App() {
     } catch (error) {
       console.error("Error updating quantities:", error);
       handleFirestoreError(error, 'update', `lists/${activeListId}/items/${item.id}`);
+    }
+  };
+
+  const handleUpdateItem = async (itemId: string, fields: Partial<GroceryItem>) => {
+    if (!user || !activeListId) return;
+    try {
+      await updateDoc(doc(db, "lists", activeListId, "items", itemId), {
+        ...fields,
+        updatedAt: serverTimestamp()
+      });
+    } catch (error) {
+      console.error("Error updating item:", error);
+      handleFirestoreError(error, 'update', `lists/${activeListId}/items/${itemId}`);
     }
   };
 
@@ -371,6 +419,113 @@ export default function App() {
   const suggestedItems = useMemo(() => items.filter(i => i.shoppingQuantity === 0 && i.inventoryQuantity === 0 && !i.unprocessedQuantity), [items]);
   const currentList = lists.find(l => l.id === activeListId);
 
+  const renderControls = () => (
+    <div className="space-y-4 mb-6">
+      <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
+        <div className="flex items-center gap-3">
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={() => setIsFilterExpanded(!isFilterExpanded)}
+            className="text-gray-600 hover:text-blue-600"
+          >
+            {isFilterExpanded ? "Hide Filters" : "Show Filters"}
+          </Button>
+          <div className="text-sm text-gray-500 hidden sm:block">
+            {activeTab === 'shopping' ? `${shoppingItems.length} items to buy` : `${inventoryItems.length} total items`}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {filterCat !== 'All' && <Badge variant="secondary" className="bg-blue-50 text-blue-700">{filterCat}</Badge>}
+          {filterLoc !== 'All' && <Badge variant="secondary" className="bg-blue-50 text-blue-700">{filterLoc}</Badge>}
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {isFilterExpanded && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3, ease: "easeInOut" }}
+            className="overflow-hidden"
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 bg-white p-4 rounded-xl border border-gray-200 shadow-sm text-sm">
+               <div className="flex flex-col gap-1.5">
+                 <label className="font-semibold text-gray-700 text-xs uppercase tracking-wider">Group by</label>
+                 <select value={groupBy} onChange={e => setGroupBy(e.target.value as 'category' | 'location')} className="bg-gray-50 border rounded-md p-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                   <option value="category">Category</option>
+                   <option value="location">Location</option>
+                 </select>
+               </div>
+               
+               <div className="flex flex-col gap-1.5">
+                 <label className="font-semibold text-gray-700 text-xs uppercase tracking-wider">Sort by</label>
+                 <div className="flex gap-2">
+                   <select value={sortBy} onChange={e => setSortBy(e.target.value as 'name' | 'quantity' | 'expiryDate' | 'dateBought' | 'dateAdded')} className="flex-1 bg-gray-50 border rounded-md p-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                     <option value="name">Name</option>
+                     <option value="quantity">Quantity</option>
+                     <option value="expiryDate">Expiry Date</option>
+                     <option value="dateBought">Date Bought</option>
+                     <option value="dateAdded">Date Added</option>
+                   </select>
+                   <select value={sortDir} onChange={e => setSortDir(e.target.value as 'asc' | 'desc')} className="w-24 bg-gray-50 border rounded-md p-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                     <option value="asc">Asc</option>
+                     <option value="desc">Desc</option>
+                   </select>
+                 </div>
+               </div>
+
+               <div className="flex flex-col gap-1.5">
+                 <label className="font-semibold text-gray-700 text-xs uppercase tracking-wider">Category</label>
+                 <select value={filterCat} onChange={e => setFilterCat(e.target.value)} className="bg-gray-50 border rounded-md p-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                   <option value="All">All Categories</option>
+                   {CATEGORIES.map(cat => (
+                     <option key={cat} value={cat}>{cat}</option>
+                   ))}
+                 </select>
+               </div>
+
+               <div className="flex flex-col gap-1.5">
+                 <label className="font-semibold text-gray-700 text-xs uppercase tracking-wider">Location</label>
+                 <select value={filterLoc} onChange={e => setFilterLoc(e.target.value)} className="bg-gray-50 border rounded-md p-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                   <option value="All">All Locations</option>
+                   <option value="Unassigned">Unassigned</option>
+                   {locations.map(loc => (
+                     <option key={loc} value={loc}>{loc}</option>
+                   ))}
+                 </select>
+               </div>
+
+               <div className="flex flex-col gap-1.5">
+                 <label className="font-semibold text-gray-700 text-xs uppercase tracking-wider">Tag</label>
+                 <select value={filterTag} onChange={e => setFilterTag(e.target.value)} className="bg-gray-50 border rounded-md p-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                   <option value="All">All Tags</option>
+                   {tags.map(tag => (
+                     <option key={tag} value={tag}>{tag}</option>
+                   ))}
+                 </select>
+               </div>
+
+               <div className="flex items-end">
+                  <Button variant="ghost" size="sm" onClick={() => {
+                    setFilterCat('All');
+                    setFilterLoc('All');
+                    setFilterTag('All');
+                    setGroupBy('category');
+                    setSortBy('name');
+                    setSortDir('asc');
+                  }} className="text-blue-600 h-9 w-full">
+                    Reset All
+                  </Button>
+               </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+
   const renderInventoryItems = () => {
     const filteredItems = inventoryItems.filter(item => {
       if (filterCat !== 'All' && item.category !== filterCat) return false;
@@ -400,6 +555,22 @@ export default function App() {
              return sortDir === 'asc' ? dates[0] : dates[dates.length - 1]; // respect order
          };
          result = getEarliest(a).localeCompare(getEarliest(b));
+      } else if (sortBy === 'dateBought') {
+         const getLatest = (it: GroceryItem) => {
+             const dates = (it.inventoryEntries || []).map(e => e.dateBought || e.dateAdded).filter(Boolean) as string[];
+             if (dates.length === 0) return sortDir === 'asc' ? '0000-00-00' : '9999-12-31';
+             dates.sort();
+             return sortDir === 'asc' ? dates[dates.length - 1] : dates[0];
+         };
+         result = getLatest(a).localeCompare(getLatest(b));
+      } else if (sortBy === 'dateAdded') {
+         const getLatest = (it: GroceryItem) => {
+             const dates = (it.inventoryEntries || []).map(e => e.dateAdded).filter(Boolean) as string[];
+             if (dates.length === 0) return sortDir === 'asc' ? '0000-00-00' : '9999-12-31';
+             dates.sort();
+             return sortDir === 'asc' ? dates[dates.length - 1] : dates[0];
+         };
+         result = getLatest(a).localeCompare(getLatest(b));
       }
       return sortDir === 'asc' ? result : -result;
     });
@@ -442,32 +613,6 @@ export default function App() {
 
     return (
       <div className="space-y-8 mt-6">
-        {inventoryItems.filter(item => (item.unprocessedQuantity || 0) > 0).length > 0 && (
-          <div className="bg-orange-50/50 border border-orange-200 rounded-xl p-5">
-            <h3 className="font-semibold text-lg text-orange-900 mb-4 flex items-center gap-2">
-              <Archive className="w-5 h-5 text-orange-600" />
-              To Be Processed
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {inventoryItems.filter(item => (item.unprocessedQuantity || 0) > 0).map(item => (
-                <div key={`unprocessed-${item.id}`} className="bg-white p-4 rounded-xl shadow-sm ring-1 ring-orange-900/10 flex flex-col gap-3">
-                  <div className="flex justify-between items-start gap-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-gray-900 truncate" title={item.name}>{item.name}</div>
-                      <div className="text-sm text-orange-700 font-medium mt-1">
-                        {item.unprocessedQuantity} {item.unit} pending
-                      </div>
-                    </div>
-                    <Button size="sm" onClick={() => setReceivingItem({ item, defaultAmount: item.unprocessedQuantity || 0 })} className="bg-orange-600 hover:bg-orange-700 text-white shrink-0">
-                      Process
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {groups.map(group => (
           <div key={group.name} className="space-y-4">
             <h3 className="font-semibold text-lg text-gray-800 border-b pb-2">{group.name}</h3>
@@ -517,6 +662,7 @@ export default function App() {
                              </div>
                              {entry.label && <span className="text-gray-500 pl-2">{entry.label}</span>}
                              {entry.expiryDate && <span className={`pl-2 ${new Date(entry.expiryDate) < new Date() ? "text-red-500 font-medium" : "text-gray-400"}`}>Exp: {entry.expiryDate}</span>}
+                             {(entry.dateBought || entry.dateAdded) && <div className="text-[10px] text-gray-400 pl-2">Bought: {entry.dateBought || entry.dateAdded}</div>}
                              {entry.tags && entry.tags.length > 0 && (
                                <div className="flex flex-wrap gap-1 pl-2 mt-0.5">
                                  {entry.tags.map(tag => (
@@ -550,30 +696,99 @@ export default function App() {
   };
 
   const renderGroupedItems = (itemList: GroceryItem[], isShoppingList: boolean, isSuggested = false) => {
-    const grouped = itemList.reduce((acc, item) => {
-      const cat = item.category;
-      if (!acc[cat]) acc[cat] = [];
-      acc[cat].push(item);
-      return acc;
-    }, {} as Record<string, GroceryItem[]>);
+    const filteredItems = itemList.filter(item => {
+      if (filterCat !== 'All' && item.category !== filterCat) return false;
+      
+      const itemLocs = item.locations || [];
+      if (item.location && !itemLocs.includes(item.location)) itemLocs.push(item.location);
+      if (filterLoc !== 'All' && itemLocs.length > 0 && !itemLocs.includes(filterLoc)) return false;
+      if (filterLoc !== 'All' && itemLocs.length === 0 && filterLoc !== 'Unassigned') return false;
+      
+      const itemTags = item.inventoryEntries?.flatMap(e => e.tags || []) || [];
+      if (filterTag !== 'All' && !itemTags.includes(filterTag)) return false;
 
-    const sortedCategories = CATEGORIES.filter(c => grouped[c]?.length > 0);
+      return true;
+    });
 
-    if (itemList.length === 0) {
+    filteredItems.sort((a, b) => {
+      let result = 0;
+      if (sortBy === 'name') {
+         result = a.name.localeCompare(b.name);
+      } else if (sortBy === 'quantity') {
+         const qA = isShoppingList ? a.shoppingQuantity : a.inventoryQuantity;
+         const qB = isShoppingList ? b.shoppingQuantity : b.inventoryQuantity;
+         result = qA - qB;
+      } else if (sortBy === 'expiryDate') {
+         const getEarliest = (it: GroceryItem) => {
+             const dates = (it.inventoryEntries || []).map(e => e.expiryDate).filter(Boolean) as string[];
+             if (dates.length === 0) return sortDir === 'asc' ? '9999-12-31' : '0000-00-00';
+             dates.sort();
+             return sortDir === 'asc' ? dates[0] : dates[dates.length - 1];
+         };
+         result = getEarliest(a).localeCompare(getEarliest(b));
+      } else if (sortBy === 'dateBought') {
+         const getLatest = (it: GroceryItem) => {
+             const dates = (it.inventoryEntries || []).map(e => e.dateBought || e.dateAdded).filter(Boolean) as string[];
+             if (dates.length === 0) return sortDir === 'asc' ? '0000-00-00' : '9999-12-31';
+             dates.sort();
+             return sortDir === 'asc' ? dates[dates.length - 1] : dates[0];
+         };
+         result = getLatest(a).localeCompare(getLatest(b));
+      } else if (sortBy === 'dateAdded') {
+         const getLatest = (it: GroceryItem) => {
+             const dates = (it.inventoryEntries || []).map(e => e.dateAdded).filter(Boolean) as string[];
+             if (dates.length === 0) return sortDir === 'asc' ? '0000-00-00' : '9999-12-31';
+             dates.sort();
+             return sortDir === 'asc' ? dates[dates.length - 1] : dates[0];
+         };
+         result = getLatest(a).localeCompare(getLatest(b));
+      }
+      return sortDir === 'asc' ? result : -result;
+    });
+
+    if (filteredItems.length === 0) {
       return (
         <div className="text-center py-16 bg-white border border-dashed rounded-lg">
-          <p className="text-gray-500">No items here yet.</p>
+          <p className="text-gray-500">No items match your filters.</p>
         </div>
       );
     }
 
+    let groups: { name: string; items: GroceryItem[] }[] = [];
+
+    if (groupBy === 'category') {
+      const g = filteredItems.reduce((acc, item) => {
+        if (!acc[item.category]) acc[item.category] = [];
+        acc[item.category].push(item);
+        return acc;
+      }, {} as Record<string, GroceryItem[]>);
+      groups = CATEGORIES.filter(c => g[c]?.length > 0).map(c => ({ name: c, items: g[c] }));
+    } else {
+      const g: Record<string, GroceryItem[]> = {};
+      filteredItems.forEach(item => {
+        const itemLocs = item.locations || [];
+        if (item.location && !itemLocs.includes(item.location)) itemLocs.push(item.location);
+        
+        if (itemLocs.length === 0) {
+          if (!g['Unassigned']) g['Unassigned'] = [];
+          g['Unassigned'].push(item);
+        } else {
+          itemLocs.forEach(loc => {
+            if (!g[loc]) g[loc] = [];
+            g[loc].push(item);
+          });
+        }
+      });
+      groups = Object.keys(g).sort().map(k => ({ name: k, items: g[k] }));
+    }
+
     return (
       <div className="space-y-8">
-        {sortedCategories.map(category => (
-          <div key={category} className="space-y-4">
-            <h3 className="font-semibold text-lg text-gray-800 border-b pb-2">{category}</h3>
+        {groups.map(group => (
+          <div key={group.name} className="space-y-4">
+            <h3 className="font-semibold text-lg text-gray-800 border-b pb-2">{group.name}</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {grouped[category].map(item => (
+              {group.items.map(item => (
                 <div key={item.id} className="bg-white p-4 rounded-xl shadow-sm ring-1 ring-gray-900/5 flex flex-col gap-3">
                   <div className="flex justify-between items-start gap-2">
                     <div className="flex-1 min-w-0">
@@ -718,39 +933,68 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-        {currentList && (
-           <div className="flex items-center justify-between mb-2">
-             <div className="flex items-center gap-2 text-sm text-gray-500">
-               <Users className="w-4 h-4" />
-               <span>Shared by {currentList.members.length} member{currentList.members.length !== 1 ? 's' : ''}</span>
-             </div>
-             <Button variant="outline" size="sm" onClick={copyShareLink} className="h-8 sm:hidden text-blue-600 border-blue-200">
-                <LinkIcon className="w-3.5 h-3.5 mr-1" />
-                Invite
-             </Button>
-           </div>
-        )}
+      <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 lg:px-8 pb-8 pt-0">
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'shopping' | 'inventory' | 'prices')} className="w-full">
-          <TabsList className="grid w-full grid-cols-3 mb-8 bg-gray-200/50 p-1 rounded-xl">
-            <TabsTrigger value="shopping" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm">
-              <ShoppingCart className="w-4 h-4 mr-2" />
-              <span className="hidden sm:inline">Shopping List</span>
-              <span className="sm:hidden">List</span>
-              {shoppingItems.length > 0 && <Badge variant="secondary" className="ml-2 bg-blue-100 text-blue-700">{shoppingItems.length}</Badge>}
+          <div className="sticky top-16 z-20 bg-gray-50 pt-6 pb-4 mb-6 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 border-b border-gray-200/50">
+            {currentList && (
+               <div className="flex items-center justify-between gap-4 mb-4">
+                 <div className="flex items-center gap-2 text-sm text-gray-500">
+                   <Users className="w-4 h-4" />
+                   <span>Shared by {currentList.members.length} member{currentList.members.length !== 1 ? 's' : ''}</span>
+                 </div>
+                 <div className="flex items-center gap-2">
+                   <Button variant="outline" size="sm" onClick={copyShareLink} className="h-8 text-blue-600 border-blue-200 bg-white">
+                      <LinkIcon className="w-3.5 h-3.5 mr-1" />
+                      Invite
+                   </Button>
+                 </div>
+               </div>
+            )}
+
+            <TabsList className="grid w-full lg:w-[898px] max-w-full grid-cols-3 bg-gray-200/50 rounded-xl h-auto min-h-[52px] sm:min-h-[42px] p-1 gap-1">
+            <TabsTrigger value="shopping" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm py-2 px-1 flex-col sm:flex-row h-auto min-h-full">
+              <ShoppingCart className="w-4 h-4 mb-1 sm:mb-0 sm:mr-2 shrink-0" />
+              <span className="text-[10px] sm:text-sm leading-tight text-center sm:text-left break-words max-w-full">Shopping List</span>
+              {shoppingItems.length > 0 && <Badge variant="secondary" className="hidden sm:flex ml-2 bg-blue-100 text-blue-700 shrink-0">{shoppingItems.length}</Badge>}
             </TabsTrigger>
-            <TabsTrigger value="inventory" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm">
-              <Archive className="w-4 h-4 mr-2" />
-              <span className="hidden sm:inline">Pantry Inventory</span>
-              <span className="sm:hidden">Pantry</span>
+            <TabsTrigger value="inventory" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm py-2 px-1 flex-col sm:flex-row h-auto min-h-full">
+              <Archive className="w-4 h-4 mb-1 sm:mb-0 sm:mr-2 shrink-0" />
+              <span className="text-[10px] sm:text-sm leading-tight text-center sm:text-left break-words max-w-full">Pantry Inventory</span>
             </TabsTrigger>
-            <TabsTrigger value="prices" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm">
-              <LineChart className="w-4 h-4 mr-2" />
-              <span className="hidden sm:inline">Price Analysis</span>
-              <span className="sm:hidden">Prices</span>
+            <TabsTrigger value="prices" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm py-2 px-1 flex-col sm:flex-row h-auto min-h-full">
+              <LineChart className="w-4 h-4 mb-1 sm:mb-0 sm:mr-2 shrink-0" />
+              <span className="text-[10px] sm:text-sm leading-tight text-center sm:text-left break-words max-w-full">Price Analysis</span>
             </TabsTrigger>
           </TabsList>
+          </div>
+
+        {items.filter(item => (item.unprocessedQuantity || 0) > 0).length > 0 && (
+          <div className="bg-orange-50/50 border border-orange-200 rounded-xl p-5 mb-8 animate-in fade-in slide-in-from-top-4 duration-500">
+            <h3 className="font-semibold text-lg text-orange-900 mb-4 flex items-center gap-2">
+              <Archive className="w-5 h-5 text-orange-600" />
+              Action Required: To Be Processed
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {items.filter(item => (item.unprocessedQuantity || 0) > 0).map(item => (
+                <div key={`unprocessed-global-${item.id}`} className="bg-white p-4 rounded-xl shadow-sm ring-1 ring-orange-900/10 flex flex-col gap-3">
+                  <div className="flex justify-between items-start gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-gray-900 truncate" title={item.name}>{item.name}</div>
+                      <div className="text-sm text-orange-700 font-medium mt-1">
+                        {item.unprocessedQuantity} {item.unit} pending
+                      </div>
+                    </div>
+                    <Button size="sm" onClick={() => setReceivingItem({ item, defaultAmount: item.unprocessedQuantity || 0 })} className="bg-orange-600 hover:bg-orange-700 text-white shrink-0">
+                      Process
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
           <TabsContent value="shopping" className="focus-visible:outline-none space-y-12">
+            {renderControls()}
             <div>
                <h2 className="sr-only">To Buy</h2>
                {renderGroupedItems(shoppingItems, true)}
@@ -766,53 +1010,11 @@ export default function App() {
             )}
           </TabsContent>
           <TabsContent value="inventory" className="focus-visible:outline-none">
-            <div className="flex flex-col sm:flex-row flex-wrap gap-4 mb-6 bg-white p-4 rounded-xl border border-gray-200 shadow-sm text-sm">
-               <div className="flex items-center gap-2">
-                 <span className="font-semibold text-gray-700 whitespace-nowrap">Group by:</span>
-                 <select value={groupBy} onChange={e => setGroupBy(e.target.value as 'category' | 'location')} className="bg-gray-50 border rounded-md p-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500">
-                   <option value="category">Category</option>
-                   <option value="location">Location</option>
-                 </select>
-               </div>
-               <div className="flex items-center gap-2">
-                 <span className="font-semibold text-gray-700 whitespace-nowrap">Sort by:</span>
-                 <select value={sortBy} onChange={e => setSortBy(e.target.value as 'name' | 'quantity' | 'expiryDate')} className="bg-gray-50 border rounded-md p-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500">
-                   <option value="name">Name</option>
-                   <option value="quantity">Quantity</option>
-                   <option value="expiryDate">Expiry Date</option>
-                 </select>
-                 <select value={sortDir} onChange={e => setSortDir(e.target.value as 'asc' | 'desc')} className="bg-gray-50 border rounded-md p-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500">
-                   <option value="asc">Asc</option>
-                   <option value="desc">Desc</option>
-                 </select>
-               </div>
-               <div className="flex items-center gap-2">
-                 <span className="font-semibold text-gray-700 whitespace-nowrap">Category:</span>
-                 <select value={filterCat} onChange={e => setFilterCat(e.target.value)} className="bg-gray-50 border rounded-md p-1.5 max-w-[140px] focus:outline-none focus:ring-1 focus:ring-blue-500 truncate">
-                   <option value="All">All</option>
-                   {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                 </select>
-               </div>
-               <div className="flex items-center gap-2">
-                 <span className="font-semibold text-gray-700 whitespace-nowrap">Location:</span>
-                 <select value={filterLoc} onChange={e => setFilterLoc(e.target.value)} className="bg-gray-50 border rounded-md p-1.5 max-w-[140px] focus:outline-none focus:ring-1 focus:ring-blue-500 truncate">
-                   <option value="All">All</option>
-                   <option value="Unassigned">Unassigned</option>
-                   {locations.map(c => <option key={c} value={c}>{c}</option>)}
-                 </select>
-               </div>
-               <div className="flex items-center gap-2">
-                 <span className="font-semibold text-gray-700 whitespace-nowrap">Tag:</span>
-                 <select value={filterTag} onChange={e => setFilterTag(e.target.value)} className="bg-gray-50 border rounded-md p-1.5 max-w-[140px] focus:outline-none focus:ring-1 focus:ring-blue-500 truncate">
-                   <option value="All">All</option>
-                   {tags.map(c => <option key={c} value={c}>{c}</option>)}
-                 </select>
-               </div>
-            </div>
+            {renderControls()}
             {renderInventoryItems()}
           </TabsContent>
           <TabsContent value="prices" className="focus-visible:outline-none">
-            <PriceAnalysisTab items={items} />
+            <PriceAnalysisTab items={items} onUpdateItem={handleUpdateItem} />
           </TabsContent>
         </Tabs>
       </main>

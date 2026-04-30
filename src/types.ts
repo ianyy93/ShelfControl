@@ -10,15 +10,17 @@ export const CATEGORIES = [
   "Other"
 ] as const;
 
+export type Category = typeof CATEGORIES[number];
+
 export const PRESET_LOCATIONS = [
-  "MR (Main floor refrigerator)",
-  "DT (Dining table)",
-  "MP (Main floor pantry)",
-  "BF (Basement freezer)",
-  "BR (Basement refrigerator)",
-  "BP (Basement pantry)",
-  "L (Laundry)",
-  "MB (Master bathroom)"
+  "Main floor refrigerator",
+  "Dining table",
+  "Main floor pantry",
+  "Basement freezer",
+  "Basement refrigerator",
+  "Basement pantry",
+  "Laundry",
+  "Master bathroom"
 ];
 
 export interface GroceryList {
@@ -37,6 +39,8 @@ export interface InventoryEntry {
   amount?: number;
   unit?: string;
   expiryDate?: string;
+  dateBought?: string;
+  dateAdded?: string;
   label?: string;
   tags?: string[];
 }
