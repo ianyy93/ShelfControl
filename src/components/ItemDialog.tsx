@@ -76,11 +76,6 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
 
   const selectStyles = "flex h-8 w-full items-center justify-between whitespace-nowrap rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm shadow-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50 bg-gray-50";
 
-  const [isNewItem, setIsNewItem] = useState(false);
-
-  const [isNewLocation, setIsNewLocation] = useState<Record<string, boolean>>({});
-  const [isNewUnit, setIsNewUnit] = useState<Record<string, boolean>>({});
-
   const [price, setPrice] = useState("");
   const [store, setStore] = useState("");
   const [priceDate, setPriceDate] = useState(new Date().toISOString().split('T')[0]);
@@ -99,9 +94,6 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
         setNotes(item.notes || "");
         setShoppingQuantity(item.shoppingQuantity || 0);
         setInventoryEntries(item.inventoryEntries || []);
-        setIsNewItem(false);
-        setIsNewLocation({});
-        setIsNewUnit({});
         
         // Set mode to whatever it has positive quantity for, or keep default
         if (defaultMode === 'shopping') {
@@ -116,7 +108,6 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
         setNotes("");
         setShoppingQuantity(0);
         setInventoryEntries([]);
-        setIsNewItem(true);
         if (defaultMode === 'shopping') {
             setShoppingQuantity(1);
         } else {
@@ -206,18 +197,6 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
     return false;
   };
 
-  const handleNameSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const val = e.target.value;
-    if (val === "__new__") {
-      setIsNewItem(true);
-      setName("");
-    } else {
-      setIsNewItem(false);
-      setName(val);
-      applyCategoryMapping(val);
-    }
-  };
-
   const handleNameInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setName(val);
@@ -277,9 +256,9 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
             </div>
           </div>
           
-          <div className="grid grid-cols-2 gap-4 items-end">
+          <div className={`grid gap-3 items-end ${mode === 'shopping' ? 'grid-cols-3' : 'grid-cols-2'}`}>
               <div className="space-y-2">
-                <Label htmlFor="category">Category</Label>
+                <Label htmlFor="category" className="text-xs font-semibold text-gray-500 uppercase tracking-tight">Category</Label>
                 <select 
                   id="category"
                   className={selectStyles}
@@ -291,18 +270,47 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                   ))}
                 </select>
               </div>
-              <div className="space-y-2 min-w-0">
-                <Label htmlFor="unit" className="truncate whitespace-nowrap block" title="Default Unit (Optional)">Default Unit (Optional)</Label>
-                <Input id="unit" value={unit} onChange={e => handleUnitChange(e.target.value)} list="units-list" placeholder="pcs, kg, lbs..." />
-              </div>
+              {mode === 'shopping' ? (
+                <div className="space-y-2">
+                  <Label htmlFor="shopping-quantity" className="text-xs font-semibold text-gray-500 uppercase tracking-tight">Shopping Qty</Label>
+                  <Input 
+                    id="shopping-quantity"
+                    type="number" 
+                    step="any" 
+                    min="0" 
+                    value={shoppingQuantity} 
+                    onChange={e => setShoppingQuantity(e.target.value)} 
+                    required={mode==='shopping'} 
+                    className="h-8"
+                  />
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Label htmlFor="unit" className="text-xs font-semibold text-gray-500 uppercase tracking-tight">Unit</Label>
+                  <Input 
+                    id="unit" 
+                    value={unit} 
+                    onChange={e => handleUnitChange(e.target.value)} 
+                    list="units-list" 
+                    placeholder="pcs, kg..." 
+                    className="h-8"
+                  />
+                </div>
+              )}
+              {mode === 'shopping' && (
+                <div className="space-y-2">
+                  <Label htmlFor="unit" className="text-xs font-semibold text-gray-500 uppercase tracking-tight">Unit</Label>
+                  <Input 
+                    id="unit" 
+                    value={unit} 
+                    onChange={e => handleUnitChange(e.target.value)} 
+                    list="units-list" 
+                    placeholder="pcs..." 
+                    className="h-8"
+                  />
+                </div>
+              )}
           </div>
-          
-          {mode === 'shopping' && (
-            <div className="space-y-2">
-              <Label>Shopping Quantity</Label>
-              <Input type="number" step="any" min="0" value={shoppingQuantity} onChange={e => setShoppingQuantity(e.target.value)} required={mode==='shopping'} />
-            </div>
-          )}
 
           {mode === 'inventory' && (
              <div className="space-y-3">
@@ -323,22 +331,20 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                    </div>
                    
                    {/* Row 1: Location, Quantity */}
-                   <div className="grid grid-cols-2 gap-3">
+                   <div className="grid grid-cols-2 gap-3 items-end">
                      <div className="space-y-1.5">
-                       <Label className="text-xs text-gray-600">Location</Label>
-                       <div className="space-y-1.5">
-                         <Input 
-                           value={entry.location} 
-                           onChange={e => updateInventoryEntry(entry.id, 'location', e.target.value)} 
-                           placeholder="Type location..." 
-                           className="h-8 text-sm bg-white"
-                           required={mode === 'inventory'}
-                           list="locations-list"
-                         />
-                       </div>
+                       <Label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Location</Label>
+                       <Input 
+                         value={entry.location} 
+                         onChange={e => updateInventoryEntry(entry.id, 'location', e.target.value)} 
+                         placeholder="Type location..." 
+                         className="h-8 text-sm bg-white"
+                         required={mode === 'inventory'}
+                         list="locations-list"
+                       />
                      </div>
                      <div className="space-y-1.5">
-                       <Label className="text-xs text-gray-600">Quantity (Count)</Label>
+                       <Label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Quantity (Count)</Label>
                        <Input 
                          type="number" step="any" min="0.01" 
                          value={entry.quantity} 
@@ -351,9 +357,9 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                    </div>
 
                    {/* Row 2: Amount, Unit */}
-                   <div className="grid grid-cols-2 gap-3">
+                   <div className="grid grid-cols-2 gap-3 items-end">
                      <div className="space-y-1.5">
-                       <Label className="text-xs text-gray-600">Amount per count</Label>
+                       <Label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Amount per count</Label>
                        <Input 
                          type="number" step="any" min="0" 
                          value={entry.amount || ""} 
@@ -363,38 +369,36 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                        />
                      </div>
                      <div className="space-y-1.5">
-                       <Label className="text-xs text-gray-600">Unit</Label>
-                       <div className="space-y-1.5">
-                          <Input 
-                            value={entry.unit} 
-                            onChange={e => updateInventoryEntry(entry.id, 'unit', e.target.value)} 
-                            placeholder="Type unit..." 
-                            className="h-8 text-sm bg-white"
-                            list="units-list"
-                          />
-                        </div>
+                       <Label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Unit</Label>
+                       <Input 
+                         value={entry.unit} 
+                         onChange={e => updateInventoryEntry(entry.id, 'unit', e.target.value)} 
+                         placeholder="Type unit..." 
+                         className="h-8 text-sm bg-white"
+                         list="units-list"
+                       />
                      </div>
                    </div>
                    {/* Row 3: Expiry, Date Bought */}
-                   <div className="grid grid-cols-2 gap-3">
+                   <div className="grid grid-cols-2 gap-3 items-end">
                      <div className="space-y-1.5">
-                       <Label className="text-xs text-gray-600">Expiry</Label>
-                       <Input type="date" value={entry.expiryDate || ""} onChange={e => updateInventoryEntry(entry.id, 'expiryDate', e.target.value)} className="h-8 text-sm bg-white text-gray-600 px-1" />
+                       <Label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Expiry</Label>
+                       <Input type="date" value={entry.expiryDate || ""} onChange={e => updateInventoryEntry(entry.id, 'expiryDate', e.target.value)} className="h-8 text-sm bg-white" />
                      </div>
                      <div className="space-y-1.5">
-                       <Label className="text-xs text-gray-600">Date Bought</Label>
-                       <Input type="date" value={entry.dateBought || entry.dateAdded || ""} onChange={e => updateInventoryEntry(entry.id, 'dateBought', e.target.value)} className="h-8 text-sm bg-white text-gray-600 px-1" />
+                       <Label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Date Bought</Label>
+                       <Input type="date" value={entry.dateBought || entry.dateAdded || ""} onChange={e => updateInventoryEntry(entry.id, 'dateBought', e.target.value)} className="h-8 text-sm bg-white" />
                      </div>
                    </div>
 
                    {/* Row 4: Label, Tags */}
-                   <div className="grid grid-cols-2 gap-3">
+                   <div className="grid grid-cols-2 gap-3 items-end">
                      <div className="space-y-1.5">
-                       <Label className="text-xs text-gray-600">Label</Label>
+                       <Label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Label</Label>
                        <Input type="text" value={entry.label || ""} onChange={e => updateInventoryEntry(entry.id, 'label', e.target.value)} placeholder="e.g. For stir fry" className="h-8 text-sm bg-white" />
                      </div>
                      <div className="space-y-1.5">
-                       <Label className="text-xs text-gray-600">Tags</Label>
+                       <Label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Tags</Label>
                        <TagInput tags={entry.tags || []} onChange={(newTags) => updateInventoryEntry(entry.id, 'tags', newTags)} />
                      </div>
                    </div>
@@ -424,26 +428,28 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                     required={mode === 'prices'}
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-gray-600">Price ($)</Label>
-                  <Input 
-                    type="number" step="0.01" min="0" 
-                    value={price} 
-                    onChange={e => setPrice(e.target.value)} 
-                    placeholder="2.99" 
-                    className="h-8 text-sm bg-white" 
-                    required={mode === 'prices'}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-gray-600">Unit for price</Label>
-                  <Input 
-                    type="text" 
-                    value={priceUnit} 
-                    onChange={e => setPriceUnit(e.target.value)} 
-                    placeholder={unit || "pcs"} 
-                    className="h-8 text-sm bg-white" 
-                  />
+                <div className="grid grid-cols-2 gap-3 col-span-2 items-end">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-gray-600">Price ($)</Label>
+                    <Input 
+                      type="number" step="0.01" min="0" 
+                      value={price} 
+                      onChange={e => setPrice(e.target.value)} 
+                      placeholder="2.99" 
+                      className="h-8 text-sm bg-white" 
+                      required={mode === 'prices'}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-gray-600">Unit for price</Label>
+                    <Input 
+                      type="text" 
+                      value={priceUnit} 
+                      onChange={e => setPriceUnit(e.target.value)} 
+                      placeholder={unit || "pcs"} 
+                      className="h-8 text-sm bg-white" 
+                    />
+                  </div>
                 </div>
                 <div className="space-y-1.5 col-span-2">
                   <Label className="text-xs text-gray-600">Date of observation</Label>

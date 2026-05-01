@@ -1,6 +1,6 @@
 {
-  "name": "Remix: PantryPro",
-  "description": "A smart grocery planning and inventory management system.",
+  "name": "Shelf Control",
+  "description": "Smart grocery planning and inventory management for your home.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

@@ -1,4 +1,4 @@
-# Security Spec for PantryPro
+# Security Spec for Shelf Control
 
 ## Data Invariants
 - A grocery item must belong to a specific user (`userId`).

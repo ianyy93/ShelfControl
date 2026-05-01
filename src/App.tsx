@@ -5,7 +5,8 @@ import { onAuthStateChanged, User } from "firebase/auth";
 import { collection, onSnapshot, query, addDoc, serverTimestamp, doc, deleteDoc, updateDoc, where, getDoc, arrayUnion } from "firebase/firestore";
 import { GroceryItem, GroceryList, CATEGORIES, InventoryEntry, PRESET_LOCATIONS, PriceEntry } from "./types";
 import { Button } from "./components/ui/button";
-import { Plus, LogOut, Trash2, Edit, ShoppingCart, Archive, Check, Minus, Users, Link as LinkIcon, LineChart } from "lucide-react";
+import { Plus, LogOut, Trash2, Edit, ShoppingCart, Check, Minus, Users, Link as LinkIcon, LineChart } from "lucide-react";
+import { GroceriesIcon } from "./components/GroceriesIcon";
 import { ItemDialog } from "./components/ItemDialog";
 import { ReceiveStockDialog } from "./components/ReceiveStockDialog";
 import { CheckOffDialog } from "./components/CheckOffDialog";
@@ -873,10 +874,10 @@ export default function App() {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 text-center space-y-6">
-          <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
-            <Archive className="w-8 h-8" />
+          <div className="w-20 h-20 bg-gray-50 text-gray-900 rounded-full flex items-center justify-center mx-auto shadow-sm ring-1 ring-gray-900/5">
+            <GroceriesIcon className="w-12 h-12" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900 tracking-tight">PantryPro</h1>
+          <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Shelf Control</h1>
           <p className="text-gray-500">Smart grocery planning and inventory management for your home.</p>
           <Button onClick={signIn} className="w-full h-12 text-md rounded-xl" size="lg">Sign in with Google</Button>
         </div>
@@ -890,10 +891,10 @@ export default function App() {
         <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-blue-600 text-white rounded-lg flex items-center justify-center shadow-md">
-                <Archive className="w-5 h-5" />
+              <div className="w-10 h-10 flex items-center justify-center">
+                <GroceriesIcon className="w-8 h-8 text-gray-900" />
               </div>
-              <h1 className="text-xl font-bold tracking-tight hidden sm:block">PantryPro</h1>
+              <h1 className="text-xl font-bold tracking-tight hidden sm:block">Shelf Control</h1>
             </div>
             
             <div className="h-6 w-px bg-gray-200 hidden sm:block mx-2"></div>
@@ -958,7 +959,7 @@ export default function App() {
               {shoppingItems.length > 0 && <Badge variant="secondary" className="hidden sm:flex ml-2 bg-blue-100 text-blue-700 shrink-0">{shoppingItems.length}</Badge>}
             </TabsTrigger>
             <TabsTrigger value="inventory" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm py-2 px-1 flex-col sm:flex-row h-auto min-h-full">
-              <Archive className="w-4 h-4 mb-1 sm:mb-0 sm:mr-2 shrink-0" />
+              <GroceriesIcon className="w-4 h-4 mb-1 sm:mb-0 sm:mr-2 shrink-0" />
               <span className="text-[10px] sm:text-sm leading-tight text-center sm:text-left break-words max-w-full">Pantry Inventory</span>
             </TabsTrigger>
             <TabsTrigger value="prices" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm py-2 px-1 flex-col sm:flex-row h-auto min-h-full">
@@ -971,7 +972,7 @@ export default function App() {
         {items.filter(item => (item.unprocessedQuantity || 0) > 0).length > 0 && (
           <div className="bg-orange-50/50 border border-orange-200 rounded-xl p-5 mb-8 animate-in fade-in slide-in-from-top-4 duration-500">
             <h3 className="font-semibold text-lg text-orange-900 mb-4 flex items-center gap-2">
-              <Archive className="w-5 h-5 text-orange-600" />
+              <GroceriesIcon className="w-5 h-5 text-orange-600" />
               Action Required: To Be Processed
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1002,7 +1003,7 @@ export default function App() {
             {suggestedItems.length > 0 && (
               <div className="pt-8 border-t border-gray-200">
                 <h2 className="text-lg font-bold mb-4 text-gray-500 flex items-center gap-2">
-                   <Archive className="w-5 h-5" />
+                   <GroceriesIcon className="w-5 h-5" />
                    Suggested (Out of Stock)
                 </h2>
                 {renderGroupedItems(suggestedItems, false, true)}
