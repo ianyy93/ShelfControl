@@ -8,8 +8,15 @@
   "icons": [
     {
       "src": "/grocery.png",
-      "sizes": "192x192 512x512",
-      "type": "image/png"
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/grocery.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
     }
   ]
 }

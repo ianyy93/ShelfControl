@@ -1,4 +1,5 @@
 import React from 'react';
+import groceryIcon from '../assets/grocery.png';
 
 interface GroceriesIconProps {
   className?: string;
@@ -7,10 +8,9 @@ interface GroceriesIconProps {
 export const GroceriesIcon = ({ className = "w-6 h-6" }: GroceriesIconProps) => {
   return (
     <img 
-      src="/grocery.png" 
+      src={groceryIcon} 
       alt="Shelf Control" 
       className={className} 
-      referrerPolicy="no-referrer"
     />
   );
 };
