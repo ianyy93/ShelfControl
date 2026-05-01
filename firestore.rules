@@ -51,6 +51,7 @@ service cloud.firestore {
         && (!('inventoryEntries' in data) || data.inventoryEntries is list)
         && data.shoppingQuantity is number
         && (!('unprocessedQuantity' in data) || data.unprocessedQuantity is number)
+        && (!('isHiddenSuggestion' in data) || data.isHiddenSuggestion is bool)
         && (!('unit' in data) || (data.unit is string && data.unit.size() <= 50))
         && (!('locations' in data) || (data.locations is list && data.locations.size() <= 10 && (data.locations.size() == 0 || data.locations[0] is string)))
         && (!('priceHistory' in data) || data.priceHistory is list)
@@ -127,7 +128,7 @@ service cloud.firestore {
           && incoming().creatorId == existing().creatorId
           && incoming().createdAt == existing().createdAt
           && incoming().updatedAt == request.time
-          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'inventoryQuantity', 'inventoryEntries', 'shoppingQuantity', 'unprocessedQuantity', 'unit', 'locations', 'priceHistory', 'notes', 'updatedAt']);
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'inventoryQuantity', 'inventoryEntries', 'shoppingQuantity', 'unprocessedQuantity', 'isHiddenSuggestion', 'unit', 'locations', 'priceHistory', 'notes', 'updatedAt']);
 
         allow delete: if isVerified()
           && isValidId(listId)

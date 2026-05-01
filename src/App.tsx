@@ -5,10 +5,9 @@ import { onAuthStateChanged, User } from "firebase/auth";
 import { collection, onSnapshot, query, addDoc, serverTimestamp, doc, deleteDoc, updateDoc, where, getDoc, arrayUnion } from "firebase/firestore";
 import { GroceryItem, GroceryList, CATEGORIES, InventoryEntry, PRESET_LOCATIONS, PriceEntry } from "./types";
 import { Button } from "./components/ui/button";
-import { Plus, LogOut, Trash2, Edit, ShoppingCart, Check, Minus, Users, Link as LinkIcon, LineChart, Box } from "lucide-react";
+import { Plus, LogOut, Trash2, Edit, ShoppingCart, Check, Minus, Users, Link as LinkIcon, LineChart, Box, ChevronRight, EyeOff } from "lucide-react";
 import { GroceriesIcon } from "./components/GroceriesIcon";
 import { ItemDialog } from "./components/ItemDialog";
-import { ReceiveStockDialog } from "./components/ReceiveStockDialog";
 import { CheckOffDialog } from "./components/CheckOffDialog";
 import { PriceAnalysisTab } from "./components/PriceAnalysisTab";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
@@ -25,11 +24,16 @@ export default function App() {
   
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<GroceryItem | undefined>();
-
-  const [receivingItem, setReceivingItem] = useState<{ item: GroceryItem, defaultAmount: number } | undefined>();
   const [checkingOffItem, setCheckingOffItem] = useState<GroceryItem | undefined>();
 
   const [activeTab, setActiveTab] = useState<'shopping' | 'inventory' | 'prices'>('shopping');
+  const [priceAnalysisItemId, setPriceAnalysisItemId] = useState<string | null>(null);
+
+  const handleGoToPriceAnalysis = (itemId: string) => {
+    setPriceAnalysisItemId(itemId);
+    setActiveTab('prices');
+  };
+
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
 
   const toggleExpanded = (id: string, override?: boolean) => {
@@ -152,9 +156,10 @@ export default function App() {
     return () => unsubscribe();
   }, [user, activeListId]);
 
-  const handleSaveItem = async (data: Partial<GroceryItem> & { newPriceEntry?: Omit<PriceEntry, 'id'> }) => {
+  const handleSaveItem = async (data: Partial<GroceryItem> & { newPriceEntry?: Omit<PriceEntry, 'id'>, processQuantity?: number }) => {
     if (!user || !activeListId) return;
-    const { newPriceEntry, ...updatedFields } = data;
+    console.log("Saving Item with data:", data);
+    const { newPriceEntry, processQuantity, ...updatedFields } = data;
     
     try {
       if (editingItem?.id) {
@@ -162,10 +167,19 @@ export default function App() {
           ...updatedFields,
           updatedAt: serverTimestamp()
         };
+        
+        if (updatedFields.shoppingQuantity && updatedFields.shoppingQuantity > 0) {
+          updateData.isHiddenSuggestion = false;
+        }
+        
+        if (processQuantity !== undefined && processQuantity > 0) {
+          updateData.unprocessedQuantity = Math.max(0, (editingItem.unprocessedQuantity || 0) - processQuantity);
+        }
+
         if (newPriceEntry) {
           updateData.priceHistory = arrayUnion({
             ...newPriceEntry,
-            id: crypto.randomUUID()
+            id: Math.random().toString(36).substr(2, 9)
           }) as unknown as PriceEntry[];
         }
         await updateDoc(doc(db, "lists", activeListId, "items", editingItem.id), updateData);
@@ -183,13 +197,14 @@ export default function App() {
                locations: newLocs,
                notes: [existingMatch.notes, updatedFields.notes].filter(Boolean).join("\n"),
                unit: updatedFields.unit || existingMatch.unit,
+               isHiddenSuggestion: false,
                updatedAt: serverTimestamp()
            };
 
            if (newPriceEntry) {
              updateData.priceHistory = arrayUnion({
                ...newPriceEntry,
-               id: crypto.randomUUID()
+               id: Math.random().toString(36).substr(2, 9)
              }) as unknown as PriceEntry[];
            }
 
@@ -206,7 +221,7 @@ export default function App() {
            if (newPriceEntry) {
              newItem.priceHistory = [{
                ...newPriceEntry,
-               id: crypto.randomUUID()
+               id: Math.random().toString(36).substr(2, 9)
              }];
            }
 
@@ -272,14 +287,20 @@ export default function App() {
     
     const newLocs = Array.from(new Set(newEntries.map(e => e.location).filter(Boolean)));
 
+    const updateData: any = {
+      inventoryQuantity: newInv,
+      shoppingQuantity: newShop,
+      inventoryEntries: newEntries,
+      locations: newLocs,
+      updatedAt: serverTimestamp()
+    };
+
+    if (newShop > 0 || newInv > 0) {
+      updateData.isHiddenSuggestion = false;
+    }
+
     try {
-      await updateDoc(doc(db, "lists", activeListId, "items", item.id), {
-        inventoryQuantity: newInv,
-        shoppingQuantity: newShop,
-        inventoryEntries: newEntries,
-        locations: newLocs,
-        updatedAt: serverTimestamp()
-      });
+      await updateDoc(doc(db, "lists", activeListId, "items", item.id), updateData);
     } catch (error) {
       console.error("Error updating quantities:", error);
       handleFirestoreError(error, 'update', `lists/${activeListId}/items/${item.id}`);
@@ -289,10 +310,16 @@ export default function App() {
   const handleUpdateItem = async (itemId: string, fields: Partial<GroceryItem>) => {
     if (!user || !activeListId) return;
     try {
-      await updateDoc(doc(db, "lists", activeListId, "items", itemId), {
+      const updateData: any = {
         ...fields,
         updatedAt: serverTimestamp()
-      });
+      };
+      
+      if (fields.shoppingQuantity !== undefined && fields.shoppingQuantity > 0) {
+        updateData.isHiddenSuggestion = false;
+      }
+
+      await updateDoc(doc(db, "lists", activeListId, "items", itemId), updateData);
     } catch (error) {
       console.error("Error updating item:", error);
       handleFirestoreError(error, 'update', `lists/${activeListId}/items/${itemId}`);
@@ -316,7 +343,7 @@ export default function App() {
         if (priceEntry) {
           updateData.priceHistory = arrayUnion({
             ...priceEntry,
-            id: crypto.randomUUID()
+            id: Math.random().toString(36).substr(2, 9)
           });
         }
 
@@ -354,33 +381,47 @@ export default function App() {
     }
   };
 
-  const handleReceiveStock = async (entries: Omit<InventoryEntry, 'id'>[], processAmount: number) => {
-    if (!user || !activeListId || !receivingItem?.item?.id) return;
-    const item = receivingItem.item;
-    
-    // Add IDs to new entries
-    const newAddedEntries = entries.map(e => ({ ...e, id: Math.random().toString(36).substr(2, 9) }));
-    
-    // Sum quantites of added pieces
-    const totalAddedQuantity = newAddedEntries.reduce((sum, e) => sum + e.quantity, 0);
-    
-    const newInv = Math.max(0, item.inventoryQuantity + totalAddedQuantity);
-    const newUnprocessed = Math.max(0, (item.unprocessedQuantity || 0) - processAmount);
-    
-    const newEntries = [...(item.inventoryEntries || []), ...newAddedEntries];
-    const newLocs = Array.from(new Set(newEntries.map(e => e.location).filter(Boolean)));
+  const toggleEntryStatus = async (item: GroceryItem, entryId: string) => {
+    if (!user || !activeListId || !item.id) return;
+    const newEntries = (item.inventoryEntries || []).map(e => {
+      if (e.id === entryId) {
+        const isOpened = !e.isOpened;
+        return {
+          ...e,
+          isOpened,
+          openedDate: isOpened ? new Date().toISOString().split('T')[0] : (e.openedDate || "")
+        };
+      }
+      return e;
+    });
 
     try {
       await updateDoc(doc(db, "lists", activeListId, "items", item.id), {
-        inventoryQuantity: newInv,
-        unprocessedQuantity: newUnprocessed,
         inventoryEntries: newEntries,
-        locations: newLocs,
         updatedAt: serverTimestamp()
       });
-      setReceivingItem(undefined);
     } catch (error) {
-      console.error("Error receiving stock:", error);
+      console.error("Error toggling status:", error);
+      handleFirestoreError(error, 'update', `lists/${activeListId}/items/${item.id}`);
+    }
+  };
+
+  const updateEntryOpenedDate = async (item: GroceryItem, entryId: string, date: string) => {
+    if (!user || !activeListId || !item.id) return;
+    const newEntries = (item.inventoryEntries || []).map(e => {
+      if (e.id === entryId) {
+        return { ...e, openedDate: date };
+      }
+      return e;
+    });
+
+    try {
+      await updateDoc(doc(db, "lists", activeListId, "items", item.id), {
+        inventoryEntries: newEntries,
+        updatedAt: serverTimestamp()
+      });
+    } catch (error) {
+      console.error("Error updating opened date:", error);
       handleFirestoreError(error, 'update', `lists/${activeListId}/items/${item.id}`);
     }
   };
@@ -420,7 +461,7 @@ export default function App() {
 
   const inventoryItems = useMemo(() => items, [items]);
   const shoppingItems = useMemo(() => items.filter(i => i.shoppingQuantity > 0), [items]);
-  const suggestedItems = useMemo(() => items.filter(i => i.shoppingQuantity === 0 && i.inventoryQuantity === 0 && !i.unprocessedQuantity), [items]);
+  const suggestedItems = useMemo(() => items.filter(i => i.shoppingQuantity === 0 && i.inventoryQuantity === 0 && !i.unprocessedQuantity && !i.isHiddenSuggestion), [items]);
   const currentList = lists.find(l => l.id === activeListId);
 
   const renderControls = () => (
@@ -454,7 +495,7 @@ export default function App() {
             transition={{ duration: 0.3, ease: "easeInOut" }}
             className="overflow-hidden"
           >
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 bg-white p-4 rounded-xl border border-gray-200 shadow-sm text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 bg-white p-3 sm:p-4 rounded-xl border border-gray-200 shadow-sm text-sm">
                <div className="flex flex-col gap-1.5">
                  <label className="font-semibold text-gray-700 text-xs uppercase tracking-wider">Group by</label>
                  <select value={groupBy} onChange={e => setGroupBy(e.target.value as 'category' | 'location')} className="bg-gray-50 border rounded-md p-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500">
@@ -616,13 +657,13 @@ export default function App() {
     }
 
     return (
-      <div className="space-y-8 mt-6">
+      <div className="space-y-6 sm:space-y-8 mt-4 sm:mt-6">
         {groups.map(group => (
           <div key={group.name} className="space-y-4">
             <h3 className="font-semibold text-lg text-gray-800 border-b pb-2">{group.name}</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
               {group.items.map(item => (
-                <div key={`${group.name}-${item.id}`} onClick={() => toggleExpanded(item.id!)} className="bg-white p-4 rounded-xl shadow-sm ring-1 ring-gray-900/5 flex flex-col gap-3 cursor-pointer hover:shadow-md transition-shadow">
+                <div key={`${group.name}-${item.id}`} onClick={() => toggleExpanded(item.id!)} className="bg-white p-3 sm:p-4 rounded-xl shadow-sm ring-1 ring-gray-900/5 flex flex-col gap-2 sm:gap-3 cursor-pointer hover:shadow-md transition-shadow">
                   <div className="flex justify-between items-start gap-2">
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-gray-900 truncate" title={item.name}>{item.name}</div>
@@ -648,7 +689,13 @@ export default function App() {
                         <Button variant="ghost" size="icon" className="h-6 w-6 text-gray-400 hover:text-blue-600" onClick={() => { setEditingItem(item); setIsDialogOpen(true); }}>
                           <Edit className="w-3.5 h-3.5" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-6 w-6 text-gray-400 hover:text-red-700" onClick={() => handleDelete(item.id!)}>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 text-gray-400 hover:text-red-700" onClick={() => {
+                          if (item.shoppingQuantity === 0 && (!item.priceHistory || item.priceHistory.length === 0) && (!item.unprocessedQuantity || item.unprocessedQuantity === 0)) {
+                              handleDelete(item.id!);
+                          } else {
+                              handleUpdateItem(item.id!, { inventoryQuantity: 0, inventoryEntries: [] });
+                          }
+                        }}>
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
                       </div>
@@ -787,69 +834,213 @@ export default function App() {
     }
 
     return (
-      <div className="space-y-8">
+      <div className="space-y-6 sm:space-y-8">
         {groups.map(group => (
           <div key={group.name} className="space-y-4">
             <h3 className="font-semibold text-lg text-gray-800 border-b pb-2">{group.name}</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {group.items.map(item => (
-                <div key={item.id} className="bg-white p-4 rounded-xl shadow-sm ring-1 ring-gray-900/5 flex flex-col gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+              {group.items.map(item => {
+                let priceInsights = null;
+                if (isShoppingList && item.priceHistory && item.priceHistory.length > 0) {
+                  const sortedPrices = [...item.priceHistory].sort((a, b) => b.date.localeCompare(a.date));
+                  const lastPurchase = sortedPrices.length ? sortedPrices[0] : null;
+                  
+                  const threeMonthsAgo = new Date();
+                  threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+                  const p3mStr = threeMonthsAgo.toISOString().split('T')[0];
+                  const p3mEntries = sortedPrices.filter(e => e.date >= p3mStr);
+                  const p3mLow = p3mEntries.length ? p3mEntries.reduce((min, e) => e.price < min.price ? e : min, p3mEntries[0]) : null;
+
+                  const twelveMonthsAgo = new Date();
+                  twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+                  const p12mStr = twelveMonthsAgo.toISOString().split('T')[0];
+                  const p12mEntries = sortedPrices.filter(e => e.date >= p12mStr);
+                  const p12mLow = p12mEntries.length ? p12mEntries.reduce((min, e) => e.price < min.price ? e : min, p12mEntries[0]) : null;
+
+                  priceInsights = { lastPurchase, p3mLow, p12mLow };
+                }
+
+                return (
+                <div key={item.id} className={`${(isShoppingList || isSuggested) ? 'p-2.5 sm:p-3' : 'p-3 sm:p-4'} bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 flex flex-col gap-2`}>
                   <div className="flex justify-between items-start gap-2">
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium text-gray-900 truncate" title={item.name}>{item.name}</div>
+                      <div className={`${(isShoppingList || isSuggested) ? 'text-sm' : 'text-base'} font-medium text-gray-900 truncate`} title={item.name}>{item.name}</div>
                       {(item.locations && item.locations.length > 0) ? (
-                        <div className="flex flex-wrap gap-1 mt-1.5">
+                        <div className={`flex flex-wrap gap-1 ${(isShoppingList || isSuggested) ? 'mt-1' : 'mt-1.5'}`}>
                           {item.locations.map(loc => (
-                            <Badge key={loc} variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-gray-50">{loc}</Badge>
+                            <Badge key={loc} variant="outline" className={`${(isShoppingList || isSuggested) ? 'text-[8px] px-1 h-3.5' : 'text-[10px] px-1.5 h-4'} bg-gray-50 border-gray-200`}>{loc}</Badge>
                           ))}
                         </div>
                       ) : item.location ? (
-                        <div className="flex flex-wrap gap-1 mt-1.5">
-                           <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-gray-50">{item.location}</Badge>
+                        <div className={`flex flex-wrap gap-1 ${(isShoppingList || isSuggested) ? 'mt-1' : 'mt-1.5'}`}>
+                           <Badge variant="outline" className={`${(isShoppingList || isSuggested) ? 'text-[8px] px-1 h-3.5' : 'text-[10px] px-1.5 h-4'} bg-gray-50 border-gray-200`}>{item.location}</Badge>
                         </div>
                       ) : null}
-                      {item.notes && <div className="text-xs text-gray-500 mt-1 line-clamp-2" title={item.notes}>{item.notes}</div>}
+                      {item.notes && <div className={`${(isShoppingList || isSuggested) ? 'text-[11px] leading-tight' : 'text-xs'} text-gray-500 mt-1 line-clamp-2`} title={item.notes}>{item.notes}</div>}
                     </div>
                     <div className="flex gap-1" style={{ flexShrink: 0 }}>
+                      {isSuggested && (
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-7 w-7 text-gray-400 hover:text-gray-600" 
+                          onClick={(e) => { e.stopPropagation(); handleUpdateItem(item.id!, { isHiddenSuggestion: true }); }}
+                          title="Hide from suggestions"
+                        >
+                          <EyeOff className="w-3.5 h-3.5" />
+                        </Button>
+                      )}
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setEditingItem(item); setIsDialogOpen(true); }}>
                         <Edit className="w-3.5 h-3.5" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500 hover:text-red-700" onClick={() => handleDelete(item.id!)}>
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
+                      {!isSuggested && (
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500 hover:text-red-700" onClick={() => {
+                          const hasHistory = (item.priceHistory || []).length > 0;
+                          const hasUnprocessed = (item.unprocessedQuantity || 0) > 0;
+                          const hasInventory = item.inventoryQuantity > 0;
+                          const hasImportantData = hasHistory || hasUnprocessed || hasInventory;
+
+                          if (isShoppingList) {
+                              if (!hasImportantData) {
+                                  if (confirm(`Delete "${item.name}" entirely?`)) {
+                                      handleDelete(item.id!);
+                                  }
+                              } else {
+                                  handleUpdateItem(item.id!, { shoppingQuantity: 0 });
+                              }
+                          } else {
+                              // This is from inventory
+                              const msg = hasHistory 
+                                  ? `Delete "${item.name}"? This will also remove its price history.`
+                                  : `Delete "${item.name}"?`;
+                              
+                              if (confirm(msg)) {
+                                  handleDelete(item.id!);
+                              }
+                          }
+                        }}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                   
-                  <div className="flex items-center justify-between mt-auto pt-2">
+                  {priceInsights && (
+                    <div className={`mt-0.5 ${isShoppingList ? 'p-2' : 'p-2.5'} bg-slate-50 border border-slate-100 rounded-lg text-[11px] space-y-1.5`}>
+                      <div className="grid grid-cols-2 gap-2 text-slate-600">
+                        {priceInsights.lastPurchase && (
+                          <div>
+                            <span className="block text-[9px] uppercase tracking-wider text-slate-400 font-semibold">Last</span>
+                            <span className="font-medium">${priceInsights.lastPurchase.price.toFixed(2)}</span> <span className="text-slate-400 truncate block max-w-full" title={priceInsights.lastPurchase.store}>@ {priceInsights.lastPurchase.store}</span>
+                          </div>
+                        )}
+                        {priceInsights.p3mLow && (
+                          <div>
+                             <span className="block text-[9px] uppercase tracking-wider text-slate-400 font-semibold">3M Low</span>
+                             <span className="font-medium">${priceInsights.p3mLow.price.toFixed(2)}</span> <span className="text-slate-400 truncate block max-w-full" title={priceInsights.p3mLow.store}>@ {priceInsights.p3mLow.store}</span>
+                          </div>
+                        )}
+                        {!priceInsights.p3mLow && priceInsights.p12mLow && (
+                          <div>
+                             <span className="block text-[9px] uppercase tracking-wider text-slate-400 font-semibold">12M Low</span>
+                             <span className="font-medium">${priceInsights.p12mLow.price.toFixed(2)}</span> <span className="text-slate-400 truncate block max-w-full" title={priceInsights.p12mLow.store}>@ {priceInsights.p12mLow.store}</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="pt-1.5 border-t border-slate-200/60 flex justify-end">
+                         <span className="flex items-center text-blue-600 hover:text-blue-800 font-medium cursor-pointer transition-colors text-[10px]" onClick={() => handleGoToPriceAnalysis(item.id!)}>
+                           Price Analysis <ChevronRight className="w-2.5 h-2.5 ml-0.5" />
+                         </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {!isShoppingList && !isSuggested && expandedItems[item.id!] && (item.inventoryEntries || []).length > 0 && (
+                    <div className="mt-1 space-y-2 pt-2 border-t border-gray-100">
+                       {(item.inventoryEntries || []).map(entry => (
+                         <div key={entry.id} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg border border-gray-100 group">
+                           <div className="min-w-0 flex-1">
+                             <div className="flex items-center gap-2">
+                               <span className="text-xs font-semibold text-gray-700">{entry.location}</span>
+                               <Button 
+                                 variant={entry.isOpened ? "default" : "outline"} 
+                                 size="sm" 
+                                 className={`h-5 text-[10px] px-1.5 ${entry.isOpened ? "bg-orange-500 hover:bg-orange-600 text-white" : "text-gray-500 border-gray-300"}`}
+                                 onClick={(e) => { e.stopPropagation(); toggleEntryStatus(item, entry.id); }}
+                               >
+                                 {entry.isOpened ? "Opened" : "Unopened"}
+                               </Button>
+                             </div>
+                             <div className="flex flex-wrap gap-y-1 gap-x-2 mt-1">
+                               {entry.expiryDate && (
+                                 <span className={`text-[10px] flex items-center gap-0.5 ${new Date(entry.expiryDate) < new Date() ? 'text-red-500 font-medium' : 'text-gray-500'}`}>
+                                   <span className="font-semibold uppercase text-[9px]">Exp:</span> {entry.expiryDate}
+                                 </span>
+                               )}
+                               {entry.isOpened && entry.openedDate && (
+                                 <span className="text-[10px] text-orange-600 flex items-center gap-0.5">
+                                   <span className="font-semibold uppercase text-[9px]">Opened:</span> 
+                                   <input 
+                                     type="date" 
+                                     value={entry.openedDate} 
+                                     onChange={(e) => updateEntryOpenedDate(item, entry.id, e.target.value)}
+                                     className="bg-transparent border-none p-0 text-[10px] focus:ring-0 w-[85px]"
+                                   />
+                                 </span>
+                               )}
+                               {entry.tags && entry.tags.length > 0 && (
+                                 <div className="flex gap-1">
+                                   {entry.tags.map(tag => (
+                                     <Badge key={tag} variant="secondary" className="text-[9px] px-1 py-0 h-4 bg-gray-100">{tag}</Badge>
+                                   ))}
+                                 </div>
+                               )}
+                             </div>
+                           </div>
+                           <div className="flex items-center gap-1">
+                              <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, -1); }} title="Decrease count">
+                                 <Minus className="w-3.5 h-3.5" />
+                              </Button>
+                              <span className="text-sm font-medium w-6 text-center text-gray-800">{entry.quantity}</span>
+                              <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, 1); }} title="Increase count">
+                                 <Plus className="w-3.5 h-3.5" />
+                              </Button>
+                           </div>
+                         </div>
+                       ))}
+                    </div>
+                  )}
+
+                  <div className={`flex items-center justify-between ${isShoppingList ? 'mt-0.5 pt-1' : 'mt-auto pt-2'}`}>
                     {isSuggested ? (
-                       <Button variant="secondary" size="sm" className="h-8 gap-1.5 w-full text-blue-600 bg-blue-50 hover:bg-blue-100" onClick={() => updateQuantities(item, 0, 1)}>
-                          <Plus className="w-3.5 h-3.5" />
+                       <Button variant="secondary" size="sm" className="h-7 text-xs gap-1.5 w-full text-blue-600 bg-blue-50 hover:bg-blue-100" onClick={() => updateQuantities(item, 0, 1)}>
+                          <Plus className="w-3 h-3" />
                           Add to Shopping List
                        </Button>
                     ) : isShoppingList ? (
                       <>
                         <div className="flex items-center gap-2">
-                          <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => updateQuantities(item, 0, -1)}>
+                          <Button variant="outline" size="icon" className="h-6 w-6" onClick={() => updateQuantities(item, 0, -1)}>
                             <Minus className="w-3 h-3" />
                           </Button>
-                          <span className="text-sm font-medium w-6 text-center">{item.shoppingQuantity} <span className="text-xs text-gray-500 font-normal">{item.unit}</span></span>
-                          <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => updateQuantities(item, 0, 1)}>
+                          <span className="text-sm font-medium w-5 text-center">{item.shoppingQuantity} <span className="text-[10px] text-gray-500 font-normal">{item.unit}</span></span>
+                          <Button variant="outline" size="icon" className="h-6 w-6" onClick={() => updateQuantities(item, 0, 1)}>
                             <Plus className="w-3 h-3" />
                           </Button>
                         </div>
-                        <Button size="sm" className="h-8 gap-1.5" onClick={() => handleCheckOff(item)}>
-                          <Check className="w-3.5 h-3.5" />
-                          <span className="hidden sm:inline">Got It</span>
+                        <Button size="sm" className="h-7 text-xs gap-1 py-0 px-2.5" onClick={() => handleCheckOff(item)}>
+                          <Check className="w-3 h-3" />
+                          Got It
                         </Button>
                       </>
                     ) : (
                       <>
-                        <div className="flex items-center gap-2">
-                          <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => updateQuantities(item, -1, 0)}>
+                        <div className="flex items-center gap-2" onClick={(e) => { if (!expandedItems[item.id!]) { e.stopPropagation(); toggleExpanded(item.id!); } }}>
+                          <Button variant="outline" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); updateQuantities(item, -1, 0); }}>
                             <Minus className="w-3 h-3" />
                           </Button>
-                          <span className="text-sm font-medium w-6 text-center">{item.inventoryQuantity} <span className="text-xs text-gray-500 font-normal">{item.unit}</span></span>
-                          <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => updateQuantities(item, 1, 0)}>
+                          <span className="text-sm font-medium w-6 text-center cursor-pointer">{item.inventoryQuantity} <span className="text-xs text-gray-500 font-normal">{item.unit}</span></span>
+                          <Button variant="outline" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); updateQuantities(item, 1, 0); }}>
                             <Plus className="w-3 h-3" />
                           </Button>
                         </div>
@@ -861,7 +1052,8 @@ export default function App() {
                     )}
                   </div>
                 </div>
-              ))}
+              );
+              })}
             </div>
           </div>
         ))}
@@ -904,21 +1096,21 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans text-gray-900">
-      <header className="bg-white border-b sticky top-0 z-10 shadow-sm">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 flex items-center justify-center">
-                <GroceriesIcon className="w-8 h-8 text-gray-900" />
+      <header className="bg-white border-b sticky top-0 z-30 shadow-sm">
+        <div className="max-w-5xl mx-auto px-2 sm:px-6 lg:px-8 h-14 sm:h-16 flex items-center justify-between">
+          <div className="flex items-center gap-2 sm:gap-4">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center">
+                <GroceriesIcon className="w-6 h-6 sm:w-8 sm:h-8 text-gray-900" />
               </div>
-              <h1 className="text-xl font-bold tracking-tight hidden sm:block">Shelf Control</h1>
+              <h1 className="text-lg sm:text-xl font-bold tracking-tight hidden sm:block">Shelf Control</h1>
             </div>
             
             <div className="h-6 w-px bg-gray-200 hidden sm:block mx-2"></div>
             
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2">
               <select 
-                className="bg-transparent border border-gray-300 rounded-lg text-sm p-1.5 focus:ring-blue-500 focus:border-blue-500 font-medium"
+                className="bg-transparent border border-gray-300 rounded-lg text-sm p-1 sm:p-1.5 focus:ring-blue-500 focus:border-blue-500 font-medium max-w-[140px] sm:max-w-[200px] truncate"
                 value={activeListId || ''}
                 onChange={(e) => {
                   if (e.target.value === 'new') {
@@ -933,43 +1125,26 @@ export default function App() {
                 ))}
                 <option value="new">+ New Household/List...</option>
               </select>
-              <Button variant="ghost" size="icon" onClick={copyShareLink} title="Copy share link" className="h-8 w-8 text-blue-600 bg-blue-50 hover:bg-blue-100 hidden sm:flex">
+              <Button variant="ghost" size="icon" onClick={copyShareLink} title="Copy share link" className="h-8 w-8 text-blue-600 bg-blue-50 hover:bg-blue-100 flex">
                 {copiedLink ? <Check className="w-4 h-4" /> : <LinkIcon className="w-4 h-4" />}
               </Button>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <Button variant="default" size="sm" onClick={() => { setEditingItem(undefined); setIsDialogOpen(true); }}>
-              <Plus className="w-4 h-4 mr-1.5" />
-              Add Item
+          <div className="flex items-center gap-1.5 sm:gap-3">
+            <Button variant="default" size="icon" className="h-8 w-8" onClick={() => { setEditingItem(undefined); setIsDialogOpen(true); }} title="Add Item">
+              <Plus className="w-4 h-4" />
             </Button>
-            <Button variant="ghost" size="sm" onClick={signOut} className="text-gray-500 hidden sm:flex">
-              <LogOut className="w-4 h-4 mr-1.5" />
-              Sign out
+            <Button variant="ghost" size="icon" onClick={signOut} className="h-8 w-8 text-gray-500" title="Sign out">
+              <LogOut className="w-4 h-4" />
             </Button>
           </div>
         </div>
       </header>
 
-      <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 lg:px-8 pb-8 pt-0">
+      <main className="flex-1 max-w-5xl w-full mx-auto px-2 sm:px-6 lg:px-8 pb-8 pt-0">
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'shopping' | 'inventory' | 'prices')} className="w-full">
-          <div className="sticky top-16 z-20 bg-gray-50 pt-6 pb-4 mb-6 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 border-b border-gray-200/50">
-            {currentList && (
-               <div className="flex items-center justify-between gap-4 mb-4">
-                 <div className="flex items-center gap-2 text-sm text-gray-500">
-                   <Users className="w-4 h-4" />
-                   <span>Shared by {currentList.members.length} member{currentList.members.length !== 1 ? 's' : ''}</span>
-                 </div>
-                 <div className="flex items-center gap-2">
-                   <Button variant="outline" size="sm" onClick={copyShareLink} className="h-8 text-blue-600 border-blue-200 bg-white">
-                      <LinkIcon className="w-3.5 h-3.5 mr-1" />
-                      Invite
-                   </Button>
-                 </div>
-               </div>
-            )}
-
-            <TabsList className="grid w-full lg:w-[898px] max-w-full grid-cols-3 bg-gray-200/50 rounded-xl h-auto min-h-[52px] sm:min-h-[42px] p-1 gap-1">
+          <div className="sticky top-14 z-20 bg-gray-50 pt-4 pb-2 mb-4 -mx-2 px-2 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 border-b border-gray-200/50">
+            <TabsList className="grid w-full lg:w-[898px] max-w-full grid-cols-3 bg-gray-200/50 rounded-xl h-auto min-h-[44px] sm:min-h-[42px] p-1 gap-1">
             <TabsTrigger value="shopping" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm py-2 px-1 flex-col sm:flex-row h-auto min-h-full">
               <ShoppingCart className="w-4 h-4 mb-1 sm:mb-0 sm:mr-2 shrink-0" />
               <span className="text-[10px] sm:text-sm leading-tight text-center sm:text-left break-words max-w-full">Shopping List</span>
@@ -986,31 +1161,6 @@ export default function App() {
           </TabsList>
           </div>
 
-        {items.filter(item => (item.unprocessedQuantity || 0) > 0).length > 0 && (
-          <div className="bg-orange-50/50 border border-orange-200 rounded-xl p-5 mb-8 animate-in fade-in slide-in-from-top-4 duration-500">
-            <h3 className="font-semibold text-lg text-orange-900 mb-4 flex items-center gap-2">
-              <Box className="w-5 h-5 text-orange-600" />
-              Action Required: To Be Processed
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {items.filter(item => (item.unprocessedQuantity || 0) > 0).map(item => (
-                <div key={`unprocessed-global-${item.id}`} className="bg-white p-4 rounded-xl shadow-sm ring-1 ring-orange-900/10 flex flex-col gap-3">
-                  <div className="flex justify-between items-start gap-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-gray-900 truncate" title={item.name}>{item.name}</div>
-                      <div className="text-sm text-orange-700 font-medium mt-1">
-                        {item.unprocessedQuantity} {item.unit} pending
-                      </div>
-                    </div>
-                    <Button size="sm" onClick={() => setReceivingItem({ item, defaultAmount: item.unprocessedQuantity || 0 })} className="bg-orange-600 hover:bg-orange-700 text-white shrink-0">
-                      Process
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
           <TabsContent value="shopping" className="focus-visible:outline-none space-y-12">
             {renderControls()}
             <div>
@@ -1019,20 +1169,48 @@ export default function App() {
             </div>
             {suggestedItems.length > 0 && (
               <div className="pt-8 border-t border-gray-200">
-                <h2 className="text-lg font-bold mb-4 text-gray-500 flex items-center gap-2">
-                   <Box className="w-5 h-5" />
-                   Suggested (Out of Stock)
-                </h2>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-bold text-gray-500 flex items-center gap-2">
+                     <Box className="w-5 h-5" />
+                     Suggested (Out of Stock)
+                  </h2>
+                </div>
                 {renderGroupedItems(suggestedItems, false, true)}
               </div>
             )}
           </TabsContent>
           <TabsContent value="inventory" className="focus-visible:outline-none">
+            {items.filter(item => (item.unprocessedQuantity || 0) > 0).length > 0 && (
+              <div className="bg-orange-50/50 border border-orange-200 rounded-xl p-3 sm:p-5 mb-6 sm:mb-8 animate-in fade-in slide-in-from-top-4 duration-500">
+                <h3 className="font-semibold text-base sm:text-lg text-orange-900 mb-3 sm:mb-4 flex items-center gap-2">
+                  <Box className="w-5 h-5 text-orange-600" />
+                  Action Required: To Be Processed
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+                  {items.filter(item => (item.unprocessedQuantity || 0) > 0).map(item => (
+                    <div key={`unprocessed-global-${item.id}`} className="bg-white p-3 sm:p-4 rounded-xl shadow-sm ring-1 ring-orange-900/10 flex flex-col gap-2 sm:gap-3">
+                      <div className="flex justify-between items-start gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-gray-900 truncate" title={item.name}>{item.name}</div>
+                          <div className="text-sm text-orange-700 font-medium mt-1">
+                            {item.unprocessedQuantity} {item.unit} pending
+                          </div>
+                        </div>
+                        <Button size="sm" onClick={() => { setEditingItem(item); setIsDialogOpen(true); }} className="bg-orange-600 hover:bg-orange-700 text-white shrink-0">
+                          Process
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {renderControls()}
             {renderInventoryItems()}
           </TabsContent>
           <TabsContent value="prices" className="focus-visible:outline-none">
-            <PriceAnalysisTab items={items} onUpdateItem={handleUpdateItem} />
+            <PriceAnalysisTab items={items} onUpdateItem={handleUpdateItem} selectedItemId={priceAnalysisItemId} onSelectItemId={setPriceAnalysisItemId} />
           </TabsContent>
         </Tabs>
       </main>
@@ -1048,15 +1226,6 @@ export default function App() {
         defaultMode={activeTab}
       />
       
-      <ReceiveStockDialog
-        open={!!receivingItem}
-        onOpenChange={(open) => { if (!open) setReceivingItem(undefined); }}
-        item={receivingItem?.item}
-        defaultAmount={receivingItem?.defaultAmount}
-        locations={locations}
-        onReceive={handleReceiveStock}
-      />
-
       <CheckOffDialog
         open={!!checkingOffItem}
         onOpenChange={(open) => { if (!open) setCheckingOffItem(undefined); }}

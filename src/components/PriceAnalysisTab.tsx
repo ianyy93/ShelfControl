@@ -9,11 +9,13 @@ import { Input } from "./ui/input";
 interface PriceAnalysisTabProps {
   items: GroceryItem[];
   onUpdateItem: (itemId: string, fields: Partial<GroceryItem>) => Promise<void>;
+  selectedItemId: string | null;
+  onSelectItemId: (id: string | null) => void;
 }
 
-export function PriceAnalysisTab({ items, onUpdateItem }: PriceAnalysisTabProps) {
-  const [selectedItemId, setSelectedItemId] = useState<string>("all");
+export function PriceAnalysisTab({ items, onUpdateItem, selectedItemId, onSelectItemId }: PriceAnalysisTabProps) {
   const [viewMode, setViewMode] = useState<"aggregate" | "splitByStore">("aggregate");
+  const [timeRange, setTimeRange] = useState<"All" | "P12M" | "P3M">("All");
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<PriceEntry | null>(null);
 
@@ -21,10 +23,17 @@ export function PriceAnalysisTab({ items, onUpdateItem }: PriceAnalysisTabProps)
     return items.filter(i => (i.priceHistory || []).length > 0);
   }, [items]);
 
+  const resolvedSelectedItemId = useMemo(() => {
+    if (selectedItemId && itemsWithPriceHistory.some(i => i.id === selectedItemId)) {
+      return selectedItemId;
+    }
+    return itemsWithPriceHistory.length > 0 ? itemsWithPriceHistory[0].id : null;
+  }, [selectedItemId, itemsWithPriceHistory]);
+
   const targetItems = useMemo(() => {
-    if (selectedItemId === "all") return itemsWithPriceHistory;
-    return itemsWithPriceHistory.filter(i => i.id === selectedItemId);
-  }, [itemsWithPriceHistory, selectedItemId]);
+    if (!resolvedSelectedItemId) return [];
+    return itemsWithPriceHistory.filter(i => i.id === resolvedSelectedItemId);
+  }, [itemsWithPriceHistory, resolvedSelectedItemId]);
 
   const allEntriesSorted = useMemo(() => {
     const entries: (PriceEntry & { itemId: string; itemName: string })[] = [];
@@ -46,7 +55,6 @@ export function PriceAnalysisTab({ items, onUpdateItem }: PriceAnalysisTabProps)
 
     allEntries.sort((a, b) => a.date.localeCompare(b.date));
 
-    // Define interface for data points
     interface DataPoint {
       date: string;
       ts: number;
@@ -55,7 +63,7 @@ export function PriceAnalysisTab({ items, onUpdateItem }: PriceAnalysisTabProps)
       Aggregate?: number;
       Aggregate_store?: string;
       Aggregate_info?: string;
-      [key: string]: any; // Allow store names
+      [key: string]: any;
     }
 
     const dateMap = new Map<string, DataPoint>();
@@ -71,6 +79,7 @@ export function PriceAnalysisTab({ items, onUpdateItem }: PriceAnalysisTabProps)
       if (viewMode === "splitByStore") {
         dataPoint[entry.store] = priceVal;
         dataPoint[`${entry.store}_info`] = `${entry.itemName} (${entry.unitStr})`;
+        dataPoint[`${entry.store}_discount`] = entry.isDiscount;
       } else {
         if (!dataPoint.sum) dataPoint.sum = 0;
         if (!dataPoint.count) dataPoint.count = 0;
@@ -79,11 +88,61 @@ export function PriceAnalysisTab({ items, onUpdateItem }: PriceAnalysisTabProps)
         dataPoint["Aggregate"] = dataPoint.sum / dataPoint.count;
         dataPoint[`Aggregate_store`] = entry.store;
         dataPoint[`Aggregate_info`] = `${entry.itemName} (${entry.unitStr})`;
+        dataPoint[`Aggregate_discount`] = entry.isDiscount;
       }
     });
 
     return Array.from(dateMap.values()).sort((a, b) => a.ts - b.ts);
   }, [targetItems, viewMode]);
+
+  const filteredData = useMemo(() => {
+    if (timeRange === "All") return data;
+    const cutoff = new Date();
+    if (timeRange === "P12M") {
+      cutoff.setMonth(cutoff.getMonth() - 12);
+    } else if (timeRange === "P3M") {
+      cutoff.setMonth(cutoff.getMonth() - 3);
+    }
+    const cutoffTs = cutoff.getTime();
+    return data.filter(d => d.ts >= cutoffTs);
+  }, [data, timeRange]);
+
+  const maxPrice = useMemo(() => {
+    let max = 0;
+    filteredData.forEach(d => {
+      Object.keys(d).forEach(k => {
+        if (typeof d[k] === 'number' && k !== 'ts' && k !== 'sum' && k !== 'count' && d[k] > max) {
+          max = d[k];
+        }
+      });
+    });
+    return max > 0 ? max : 10;
+  }, [filteredData]);
+
+  const yTicks = useMemo(() => {
+     const steps = [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
+     let stepSize = steps[steps.length - 1];
+     for (let i = 0; i < steps.length; i++) {
+        if (maxPrice / steps[i] <= 6) {
+            stepSize = steps[i];
+            break;
+        }
+     }
+     if (maxPrice / stepSize > 6 && maxPrice > 1000) {
+        stepSize = Math.ceil(maxPrice / 6 / 100) * 100;
+     }
+     
+     const ticks = [];
+     const maxTick = Math.ceil((maxPrice * 1.1) / stepSize) * stepSize;
+     const actualMaxTick = maxTick < maxPrice ? maxTick + stepSize : maxTick;
+     for (let i = 0; i <= actualMaxTick; i += stepSize) {
+         ticks.push(i);
+     }
+     if (ticks[ticks.length - 1] === maxPrice) {
+         ticks.push(ticks[ticks.length - 1] + stepSize);
+     }
+     return ticks;
+  }, [maxPrice]);
 
   const existingStores = useMemo(() => {
     const stores = new Set<string>();
@@ -103,10 +162,12 @@ export function PriceAnalysisTab({ items, onUpdateItem }: PriceAnalysisTabProps)
           {payload.map((p: any, idx: number) => {
              const infoKey = p.dataKey === "Aggregate" ? `Aggregate_info` : `${p.dataKey}_info`;
              const storeKey = p.dataKey === "Aggregate" ? `Aggregate_store` : null;
+             const discountKey = p.dataKey === "Aggregate" ? `Aggregate_discount` : `${p.dataKey}_discount`;
+             const isDiscount = p.payload[discountKey];
              return (
                <div key={idx} style={{ color: p.color }} className="mb-1">
                  <span className="font-semibold">{p.name === "Aggregate" && storeKey ? p.payload[storeKey] : p.name}: </span>
-                 ${p.value.toFixed(2)} 
+                 ${p.value.toFixed(2)} {isDiscount && <span className="text-[10px] bg-yellow-100 text-yellow-800 px-1 py-0.5 rounded ml-1 font-bold">DEAL</span>}
                  <span className="text-gray-500 text-xs ml-1 block">{p.payload[infoKey]}</span>
                </div>
              );
@@ -117,8 +178,8 @@ export function PriceAnalysisTab({ items, onUpdateItem }: PriceAnalysisTabProps)
     return null;
   };
 
-  const CustomDot = (props: { cx?: number, cy?: number, payload?: any, stroke?: string }) => {
-    const { cx, cy, payload } = props;
+  const CustomDot = (props: { cx?: number, cy?: number, payload?: any, stroke?: string, dataKey?: string }) => {
+    const { cx, cy, payload, dataKey } = props;
     let color = props.stroke || "black";
     
     if (viewMode === "aggregate" && payload?.Aggregate_store) {
@@ -126,8 +187,27 @@ export function PriceAnalysisTab({ items, onUpdateItem }: PriceAnalysisTabProps)
       if (storeIdx !== -1) color = colors[storeIdx];
     }
 
+    let isDiscount = false;
+    if (viewMode === "aggregate") {
+       isDiscount = payload?.Aggregate_discount === true;
+    } else if (dataKey) {
+       isDiscount = payload?.[`${dataKey}_discount`] === true;
+    }
+
+    if (isDiscount) {
+      // Draw a star shape to denote a discount
+      return (
+        <path 
+           d={`M ${cx} ${(cy || 0) - 7.5} L ${(cx || 0) + 2.25} ${(cy || 0) - 2.25} L ${(cx || 0) + 7.5} ${(cy || 0) - 2.25} L ${(cx || 0) + 3} ${(cy || 0) + 1.5} L ${(cx || 0) + 4.5} ${(cy || 0) + 7.5} L ${cx} ${(cy || 0) + 3.75} L ${(cx || 0) - 4.5} ${(cy || 0) + 7.5} L ${(cx || 0) - 3} ${(cy || 0) + 1.5} L ${(cx || 0) - 7.5} ${(cy || 0) - 2.25} L ${(cx || 0) - 2.25} ${(cy || 0) - 2.25} Z`}
+           fill={color} 
+           stroke="white" 
+           strokeWidth={1.5} 
+        />
+      );
+    }
+
     return (
-      <circle cx={cx} cy={cy} r={4} stroke="white" strokeWidth={1} fill={color} />
+      <circle cx={cx} cy={cy} r={6} stroke="white" strokeWidth={1.5} fill={color} />
     );
   };
 
@@ -141,7 +221,6 @@ export function PriceAnalysisTab({ items, onUpdateItem }: PriceAnalysisTabProps)
   };
 
   const handlePriceDelete = async (itemId: string, entryId: string) => {
-    if (!confirm("Are you sure you want to delete this price record?")) return;
     const item = items.find(i => i.id === itemId);
     if (!item) return;
     const newHistory = (item.priceHistory || []).filter(ph => ph.id !== entryId);
@@ -159,20 +238,33 @@ export function PriceAnalysisTab({ items, onUpdateItem }: PriceAnalysisTabProps)
   }
 
   return (
-    <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm space-y-6">
-      <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <label className="text-sm font-semibold text-gray-700 whitespace-nowrap">Item:</label>
-          <select 
-            value={selectedItemId} 
-            onChange={e => setSelectedItemId(e.target.value)}
-            className={selectStyles}
-          >
-            <option value="all">All Tracked Items</option>
-            {itemsWithPriceHistory.map(i => (
-              <option key={i.id} value={i.id!}>{i.name}</option>
-            ))}
-          </select>
+    <div className="bg-white p-4 sm:p-6 rounded-xl border border-gray-200 shadow-sm space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 items-center justify-between">
+        <div className="flex flex-wrap items-center gap-3 sm:gap-4 w-full sm:w-auto">
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-semibold text-gray-700 whitespace-nowrap">Item:</label>
+            <select 
+              value={resolvedSelectedItemId || ""} 
+              onChange={e => onSelectItemId(e.target.value)}
+              className={selectStyles}
+            >
+              {itemsWithPriceHistory.map(i => (
+                <option key={i.id} value={i.id!}>{i.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-semibold text-gray-700 whitespace-nowrap">Period:</label>
+            <select 
+              value={timeRange} 
+              onChange={e => setTimeRange(e.target.value as any)}
+              className={selectStyles}
+            >
+              <option value="All">All Time</option>
+              <option value="P12M">Last 12 Months</option>
+              <option value="P3M">Last 3 Months</option>
+            </select>
+          </div>
         </div>
 
         <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -188,12 +280,12 @@ export function PriceAnalysisTab({ items, onUpdateItem }: PriceAnalysisTabProps)
         </div>
       </div>
 
-      <div className="h-[400px] w-full mt-8">
+      <div className="h-[200px] sm:h-[400px] w-full mt-6 sm:mt-8">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+          <LineChart data={filteredData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
             <XAxis dataKey="date" tick={{fontSize: 12}} tickMargin={10} axisLine={false} tickLine={false} />
-            <YAxis tick={{fontSize: 12}} axisLine={false} tickLine={false} tickFormatter={(val) => `$${val}`} />
+            <YAxis ticks={yTicks} domain={[0, yTicks[yTicks.length - 1]]} tick={{fontSize: 12}} axisLine={false} tickLine={false} tickFormatter={(val) => `$${val}`} />
             <Tooltip content={<CustomTooltip />} />
             {viewMode === "splitByStore" ? (
               existingStores.map((store, i) => (
@@ -224,6 +316,27 @@ export function PriceAnalysisTab({ items, onUpdateItem }: PriceAnalysisTabProps)
           </LineChart>
         </ResponsiveContainer>
       </div>
+
+      <div className="flex justify-center flex-wrap gap-6 text-xs text-gray-600 mt-2 mb-4">
+        <div className="flex items-center gap-1.5">
+          <svg width="14" height="14" viewBox="0 0 14 14" className="overflow-visible">
+            <circle cx="7" cy="7" r="5" stroke="#9CA3AF" strokeWidth="1.5" fill="none" />
+          </svg>
+          <span>Regular Price</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <svg width="14" height="14" viewBox="0 0 14 14" className="overflow-visible">
+            <path 
+               d={`M 7 0.5 L 8.7 5.5 L 14 5.5 L 9.7 8.5 L 11.3 13.5 L 7 10.5 L 2.7 13.5 L 4.3 8.5 L 0 5.5 L 5.3 5.5 Z`}
+               fill="none" 
+               stroke="#9CA3AF" 
+               strokeWidth="1.5" 
+               strokeLinejoin="round"
+            />
+          </svg>
+          <span>Discount Price</span>
+        </div>
+      </div>
       
       {viewMode === "aggregate" && (
         <div className="flex flex-wrap gap-3 justify-center text-xs text-gray-600 mt-4 border-t pt-4">
@@ -246,11 +359,9 @@ export function PriceAnalysisTab({ items, onUpdateItem }: PriceAnalysisTabProps)
           <table className="w-full text-sm text-left border-collapse">
             <thead>
               <tr className="bg-gray-50 text-gray-500 uppercase text-[10px] tracking-wider border-b">
-                <th className="px-4 py-3 font-semibold">Date</th>
-                <th className="px-4 py-3 font-semibold">Item</th>
+                <th className="px-4 py-3 font-semibold w-28 sm:w-36">Date</th>
                 <th className="px-4 py-3 font-semibold">Store</th>
                 <th className="px-4 py-3 font-semibold">Price</th>
-                <th className="px-4 py-3 font-semibold">Unit</th>
                 <th className="px-4 py-3 font-semibold text-right">Actions</th>
               </tr>
             </thead>
@@ -262,7 +373,6 @@ export function PriceAnalysisTab({ items, onUpdateItem }: PriceAnalysisTabProps)
                       <Input type="date" value={editForm?.date} onChange={e => setEditForm(f => f ? {...f, date: e.target.value} : null)} className="h-8 text-xs p-1" />
                     ) : entry.date}
                   </td>
-                  <td className="px-4 py-3 font-medium">{entry.itemName}</td>
                   <td className="px-4 py-3">
                     {editingEntryId === entry.id ? (
                       <Input value={editForm?.store} onChange={e => setEditForm(f => f ? {...f, store: e.target.value} : null)} className="h-8 text-xs px-2" />
@@ -270,13 +380,16 @@ export function PriceAnalysisTab({ items, onUpdateItem }: PriceAnalysisTabProps)
                   </td>
                   <td className="px-4 py-3">
                     {editingEntryId === entry.id ? (
-                      <Input type="number" step="any" value={editForm?.price} onChange={e => setEditForm(f => f ? {...f, price: Number(e.target.value)} : null)} className="h-8 text-xs px-2 w-20" />
-                    ) : `$${entry.price.toFixed(2)}`}
-                  </td>
-                  <td className="px-4 py-3 text-gray-500">
-                    {editingEntryId === entry.id ? (
-                      <Input value={editForm?.unitStr} onChange={e => setEditForm(f => f ? {...f, unitStr: e.target.value} : null)} className="h-8 text-xs px-2 w-20" />
-                    ) : entry.unitStr}
+                      <div className="flex flex-col gap-1">
+                        <Input type="number" step="any" value={editForm?.price} onChange={e => setEditForm(f => f ? {...f, price: Number(e.target.value)} : null)} className="h-8 text-xs px-2 w-20" />
+                        <Input value={editForm?.unitStr} onChange={e => setEditForm(f => f ? {...f, unitStr: e.target.value} : null)} placeholder="Unit" className="h-7 text-[10px] px-2 w-20" />
+                      </div>
+                    ) : (
+                      <div className="flex flex-col">
+                        <span>${entry.price.toFixed(2)}</span>
+                        <span className="text-[10px] text-gray-400">{entry.unitStr}</span>
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">

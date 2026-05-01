@@ -43,6 +43,8 @@ export interface InventoryEntry {
   dateAdded?: string;
   label?: string;
   tags?: string[];
+  isOpened?: boolean;
+  openedDate?: string;
 }
 
 export interface PriceEntry {
@@ -51,6 +53,9 @@ export interface PriceEntry {
   price: number;
   unitStr: string;
   store: string;
+  isDiscount?: boolean;
+  dealPrice?: number;
+  dealQuantity?: number;
 }
 
 export interface GroceryItem {
@@ -66,6 +71,7 @@ export interface GroceryItem {
   location?: string; // Backwards compatibility
   notes: string;
   priceHistory?: PriceEntry[];
+  isHiddenSuggestion?: boolean;
   listId: string;
   creatorId: string;
   createdAt?: string | unknown;

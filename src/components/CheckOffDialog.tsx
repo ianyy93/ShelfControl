@@ -32,17 +32,24 @@ interface CheckOffDialogProps {
 export function CheckOffDialog({ open, onOpenChange, item, onConfirm }: CheckOffDialogProps) {
   const [loading, setLoading] = useState(false);
   const [trackPrice, setTrackPrice] = useState(true);
-  const [price, setPrice] = useState<string>("");
-  const [unitStr, setUnitStr] = useState<string>("");
-  const [store, setStore] = useState<string>("");
-  const [date, setDate] = useState<string>("");
+  
+  const [price, setPrice] = useState("");
+  const [store, setStore] = useState("");
+  const [date, setDate] = useState("");
+  const [priceUnit, setPriceUnit] = useState("");
+  const [isDiscount, setIsDiscount] = useState(false);
+  const [dealPrice, setDealPrice] = useState("");
+  const [dealQuantity, setDealQuantity] = useState("");
 
   useEffect(() => {
     if (open && item) {
       setTrackPrice(true);
       setPrice("");
-      setUnitStr(item.unit || "count");
+      setPriceUnit(item.unit || "");
       setStore("");
+      setIsDiscount(false);
+      setDealPrice("");
+      setDealQuantity("");
       
       const tzOffset = (new Date()).getTimezoneOffset() * 60000; //offset in milliseconds
       const localISOTime = (new Date(Date.now() - tzOffset)).toISOString().slice(0, 10);
@@ -57,12 +64,21 @@ export function CheckOffDialog({ open, onOpenChange, item, onConfirm }: CheckOff
     setLoading(true);
     let priceEntry: Omit<PriceEntry, 'id'> | null = null;
     
-    if (trackPrice && price !== "") {
+    if (trackPrice) {
+      let finalPrice = Number(price);
+      let finalUnit = priceUnit || item.unit || "unit";
+      
+      if (isDiscount) {
+          finalPrice = Number(dealPrice) / Number(dealQuantity);
+          finalUnit = `${dealQuantity} ${priceUnit || item.unit || "unit"}`;
+      }
+
       priceEntry = {
         date,
-        price: Number(price),
-        unitStr,
-        store: store || "Unknown"
+        price: finalPrice,
+        unitStr: finalUnit,
+        store: store || "Unknown",
+        isDiscount
       };
     }
 
@@ -78,7 +94,7 @@ export function CheckOffDialog({ open, onOpenChange, item, onConfirm }: CheckOff
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Got {item.name}</DialogTitle>
           <DialogDescription>
@@ -87,7 +103,7 @@ export function CheckOffDialog({ open, onOpenChange, item, onConfirm }: CheckOff
         </DialogHeader>
         
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="flex items-center gap-2 mb-4">
+          <div className="flex items-center gap-2 mb-2">
             <input 
               type="checkbox" 
               id="trackPrice" 
@@ -99,68 +115,117 @@ export function CheckOffDialog({ open, onOpenChange, item, onConfirm }: CheckOff
           </div>
 
           {trackPrice && (
-            <div className="space-y-4 bg-gray-50 p-4 rounded-xl border border-gray-100">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="price">Price ($)</Label>
-                  <Input 
-                    id="price" 
-                    type="number" 
-                    step="any" 
-                    min="0" 
-                    value={price} 
-                    onChange={e => setPrice(e.target.value)} 
-                    placeholder="e.g. 4.99"
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="unitStr">Per Unit</Label>
-                  <Input 
-                    id="unitStr"
-                    value={unitStr}
-                    onChange={e => setUnitStr(e.target.value)}
-                    placeholder="e.g. lb, kg, count"
-                    list="price-units-list"
-                    required
-                  />
-                  <datalist id="price-units-list">
-                    {PRESET_UNITS.map(u => <option key={u} value={`per ${u}`} />)}
-                    <option value="total" />
-                  </datalist>
-                </div>
+            <div className="grid grid-cols-2 gap-3 p-4 bg-gray-50/50 rounded-xl border border-gray-200 animate-in fade-in zoom-in-95 duration-200">
+              <div className="space-y-1.5 col-span-2">
+                <Label className="text-xs text-gray-600">Store / Merchant</Label>
+                <Input 
+                  value={store} 
+                  onChange={e => setStore(e.target.value)} 
+                  placeholder="e.g. Costco, Walmart" 
+                  className="h-8 text-sm bg-white" 
+                  required={trackPrice}
+                  list="stores-list"
+                />
+                <datalist id="stores-list">
+                  {STORES.map(s => <option key={s} value={s} />)}
+                </datalist>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="store">Store</Label>
-                  <Input 
-                    id="store"
-                    value={store}
-                    onChange={e => setStore(e.target.value)}
-                    placeholder="e.g. Costco"
-                    list="stores-list"
-                    required
-                  />
-                  <datalist id="stores-list">
-                    {STORES.map(s => <option key={s} value={s} />)}
-                  </datalist>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="date">Date</Label>
-                  <Input 
-                    id="date" 
-                    type="date" 
-                    value={date} 
-                    onChange={e => setDate(e.target.value)} 
-                    required
-                  />
-                </div>
+              <div className="space-y-1.5 col-span-2 mt-1">
+                <Label className="text-xs text-gray-600">Date</Label>
+                <Input 
+                  type="date" 
+                  value={date} 
+                  onChange={e => setDate(e.target.value)} 
+                  className="h-8 text-sm bg-white" 
+                  required={trackPrice}
+                />
               </div>
+
+              <div className="flex items-center space-x-2 col-span-2 mt-2">
+                <input
+                  type="checkbox"
+                  id="isDiscount"
+                  checked={isDiscount}
+                  onChange={(e) => setIsDiscount(e.target.checked)}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <Label htmlFor="isDiscount" className="text-xs text-gray-600 cursor-pointer">
+                  This is a bulk discount / deal (e.g., buy 2 for $5)
+                </Label>
+              </div>
+
+              {!isDiscount ? (
+                <div className="grid grid-cols-2 gap-3 col-span-2 items-end">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-gray-600">Price ($)</Label>
+                    <Input 
+                      type="number" step="0.01" min="0" 
+                      value={price} 
+                      onChange={e => setPrice(e.target.value)} 
+                      placeholder="2.99" 
+                      className="h-8 text-sm bg-white" 
+                      required={trackPrice && !isDiscount}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-gray-600">Unit for price</Label>
+                    <Input 
+                      type="text" 
+                      value={priceUnit} 
+                      onChange={e => setPriceUnit(e.target.value)} 
+                      placeholder={item.unit || "pcs"} 
+                      className="h-8 text-sm bg-white" 
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="col-span-2 space-y-3">
+                  <div className="grid grid-cols-2 gap-3 items-end">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-gray-600">Deal Price ($)</Label>
+                      <Input 
+                        type="number" step="0.01" min="0" 
+                        value={dealPrice} 
+                        onChange={e => setDealPrice(e.target.value)} 
+                        placeholder="e.g. 5.00" 
+                        className="h-8 text-sm bg-white" 
+                        required={trackPrice && isDiscount}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-gray-600">Deal Quantity</Label>
+                      <Input 
+                        type="number" step="any" min="0" 
+                        value={dealQuantity} 
+                        onChange={e => setDealQuantity(e.target.value)} 
+                        placeholder="e.g. 2" 
+                        className="h-8 text-sm bg-white" 
+                        required={trackPrice && isDiscount}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-gray-600">Unit for quantity</Label>
+                    <Input 
+                      type="text" 
+                      value={priceUnit} 
+                      onChange={e => setPriceUnit(e.target.value)} 
+                      placeholder={item.unit || "pcs"} 
+                      className="h-8 text-sm bg-white" 
+                    />
+                  </div>
+                  {dealPrice && dealQuantity && Number(dealQuantity) > 0 && (
+                    <div className="text-xs font-medium text-blue-800 bg-blue-100/50 p-2 rounded border border-blue-200">
+                      Calculated Unit Price: ${ (Number(dealPrice) / Number(dealQuantity)).toFixed(2) } / {priceUnit || item.unit || "unit"}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
           
-          <DialogFooter>
+          <DialogFooter className="pt-4">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
               Cancel
             </Button>

@@ -32,8 +32,12 @@
               "amount": { "type": "number" },
               "unit": { "type": "string" },
               "expiryDate": { "type": "string" },
+              "dateBought": { "type": "string" },
+              "dateAdded": { "type": "string" },
               "label": { "type": "string" },
-              "tags": { "type": "array", "items": { "type": "string" } }
+              "tags": { "type": "array", "items": { "type": "string" } },
+              "isOpened": { "type": "boolean" },
+              "openedDate": { "type": "string" }
             } 
           }
         },
@@ -42,6 +46,7 @@
         "unit": { "type": "string" },
         "locations": { "type": "array", "items": { "type": "string"} },
         "notes": { "type": "string" },
+        "isHiddenSuggestion": { "type": "boolean" },
         "listId": { "type": "string" },
         "creatorId": { "type": "string" },
         "createdAt": { "type": "string" },
