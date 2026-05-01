@@ -5,7 +5,7 @@ import { onAuthStateChanged, User } from "firebase/auth";
 import { collection, onSnapshot, query, addDoc, serverTimestamp, doc, deleteDoc, updateDoc, where, getDoc, arrayUnion } from "firebase/firestore";
 import { GroceryItem, GroceryList, CATEGORIES, InventoryEntry, PRESET_LOCATIONS, PriceEntry } from "./types";
 import { Button } from "./components/ui/button";
-import { Plus, LogOut, Trash2, Edit, ShoppingCart, Check, Minus, Users, Link as LinkIcon, LineChart } from "lucide-react";
+import { Plus, LogOut, Trash2, Edit, ShoppingCart, Check, Minus, Users, Link as LinkIcon, LineChart, Box } from "lucide-react";
 import { GroceriesIcon } from "./components/GroceriesIcon";
 import { ItemDialog } from "./components/ItemDialog";
 import { ReceiveStockDialog } from "./components/ReceiveStockDialog";
@@ -17,6 +17,7 @@ import { Badge } from "./components/ui/badge";
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
   
   const [lists, setLists] = useState<GroceryList[]>([]);
   const [activeListId, setActiveListId] = useState<string | null>(null);
@@ -48,7 +49,9 @@ export default function App() {
   const tags = useMemo(() => Array.from(new Set(items.flatMap(i => i.inventoryEntries?.flatMap(e => e.tags || []) || []))), [items]);
 
   useEffect(() => {
+    console.log("onAuthStateChanged listener attached");
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      console.log("Auth state changed:", currentUser ? `Logged in as ${currentUser.uid}` : "Logged out");
       setUser(currentUser);
       setLoading(false);
     });
@@ -866,6 +869,15 @@ export default function App() {
     );
   };
 
+  const handleSignIn = async () => {
+    setAuthError(null);
+    try {
+      await signIn();
+    } catch (error: any) {
+      setAuthError(error?.message || "Failed to sign in");
+    }
+  };
+
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
   }
@@ -879,7 +891,12 @@ export default function App() {
           </div>
           <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Shelf Control</h1>
           <p className="text-gray-500">Smart grocery planning and inventory management for your home.</p>
-          <Button onClick={signIn} className="w-full h-12 text-md rounded-xl" size="lg">Sign in with Google</Button>
+          {authError && (
+            <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm mb-4">
+              {authError}
+            </div>
+          )}
+          <Button onClick={handleSignIn} className="w-full h-12 text-md rounded-xl" size="lg">Sign in with Google</Button>
         </div>
       </div>
     );
@@ -959,7 +976,7 @@ export default function App() {
               {shoppingItems.length > 0 && <Badge variant="secondary" className="hidden sm:flex ml-2 bg-blue-100 text-blue-700 shrink-0">{shoppingItems.length}</Badge>}
             </TabsTrigger>
             <TabsTrigger value="inventory" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm py-2 px-1 flex-col sm:flex-row h-auto min-h-full">
-              <GroceriesIcon className="w-4 h-4 mb-1 sm:mb-0 sm:mr-2 shrink-0" />
+              <Box className="w-4 h-4 mb-1 sm:mb-0 sm:mr-2 shrink-0" />
               <span className="text-[10px] sm:text-sm leading-tight text-center sm:text-left break-words max-w-full">Pantry Inventory</span>
             </TabsTrigger>
             <TabsTrigger value="prices" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm py-2 px-1 flex-col sm:flex-row h-auto min-h-full">
@@ -972,7 +989,7 @@ export default function App() {
         {items.filter(item => (item.unprocessedQuantity || 0) > 0).length > 0 && (
           <div className="bg-orange-50/50 border border-orange-200 rounded-xl p-5 mb-8 animate-in fade-in slide-in-from-top-4 duration-500">
             <h3 className="font-semibold text-lg text-orange-900 mb-4 flex items-center gap-2">
-              <GroceriesIcon className="w-5 h-5 text-orange-600" />
+              <Box className="w-5 h-5 text-orange-600" />
               Action Required: To Be Processed
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1003,7 +1020,7 @@ export default function App() {
             {suggestedItems.length > 0 && (
               <div className="pt-8 border-t border-gray-200">
                 <h2 className="text-lg font-bold mb-4 text-gray-500 flex items-center gap-2">
-                   <GroceriesIcon className="w-5 h-5" />
+                   <Box className="w-5 h-5" />
                    Suggested (Out of Stock)
                 </h2>
                 {renderGroupedItems(suggestedItems, false, true)}
