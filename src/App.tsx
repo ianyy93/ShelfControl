@@ -741,7 +741,7 @@ export default function App() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <div className="font-medium text-gray-900 truncate" title={item.name}>{item.name}</div>
-                        {!isShoppingList && item.inventoryEntries?.some(e => e.isOpened) && (
+                        {item.inventoryEntries?.some(e => e.isOpened) && (
                           <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 bg-orange-500 text-white border-none font-semibold shadow-sm">
                             OPENED
                           </Badge>
