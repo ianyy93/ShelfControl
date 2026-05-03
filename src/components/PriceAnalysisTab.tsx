@@ -74,7 +74,7 @@ export function PriceAnalysisTab({ items, onUpdateItem, selectedItemId, onSelect
       }
       const dataPoint = dateMap.get(entry.date)!;
       
-      const priceVal = entry.price;
+      const priceVal = entry.price / (entry.quantity || 1);
       
       if (viewMode === "splitByStore") {
         dataPoint[entry.store] = priceVal;
@@ -381,13 +381,27 @@ export function PriceAnalysisTab({ items, onUpdateItem, selectedItemId, onSelect
                   <td className="px-4 py-3">
                     {editingEntryId === entry.id ? (
                       <div className="flex flex-col gap-1">
-                        <Input type="number" step="any" value={editForm?.price} onChange={e => setEditForm(f => f ? {...f, price: Number(e.target.value)} : null)} className="h-8 text-xs px-2 w-20" />
-                        <Input value={editForm?.unitStr} onChange={e => setEditForm(f => f ? {...f, unitStr: e.target.value} : null)} placeholder="Unit" className="h-7 text-[10px] px-2 w-20" />
+                        <div className="flex gap-1">
+                          <div className="flex flex-col">
+                            <Label className="text-[9px] text-gray-400">Total $</Label>
+                            <Input type="number" step="any" value={editForm?.price} onChange={e => setEditForm(f => f ? {...f, price: Number(e.target.value)} : null)} className="h-8 text-xs px-2 w-16" />
+                          </div>
+                          <div className="flex flex-col">
+                            <Label className="text-[9px] text-gray-400">Qty</Label>
+                            <Input type="number" step="any" value={editForm?.quantity} onChange={e => setEditForm(f => f ? {...f, quantity: Number(e.target.value)} : null)} className="h-8 text-xs px-2 w-12" />
+                          </div>
+                        </div>
+                        <Input value={editForm?.unitStr} onChange={e => setEditForm(f => f ? {...f, unitStr: e.target.value} : null)} placeholder="Unit" className="h-7 text-[10px] px-2 w-full" />
                       </div>
                     ) : (
                       <div className="flex flex-col">
-                        <span>${entry.price.toFixed(2)}</span>
-                        <span className="text-[10px] text-gray-400">{entry.unitStr}</span>
+                        <div className="flex items-baseline gap-1">
+                          <span className="font-medium">${entry.price.toFixed(2)}</span>
+                          <span className="text-[10px] text-gray-400">for {entry.quantity || 1}</span>
+                        </div>
+                        <span className="text-[10px] text-gray-400 italic">
+                          ${(entry.price / (entry.quantity || 1)).toFixed(2)} / {entry.unitStr}
+                        </span>
                       </div>
                     )}
                   </td>

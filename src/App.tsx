@@ -5,7 +5,7 @@ import { onAuthStateChanged, User } from "firebase/auth";
 import { collection, onSnapshot, query, addDoc, serverTimestamp, doc, deleteDoc, updateDoc, where, getDoc, arrayUnion } from "firebase/firestore";
 import { GroceryItem, GroceryList, CATEGORIES, InventoryEntry, PRESET_LOCATIONS, PriceEntry } from "./types";
 import { Button } from "./components/ui/button";
-import { Plus, LogOut, Trash2, Edit, ShoppingCart, Check, Minus, Users, Link as LinkIcon, LineChart, Box, ChevronRight, EyeOff } from "lucide-react";
+import { Plus, LogOut, Trash2, Edit, ShoppingCart, Check, Minus, Users, Link as LinkIcon, LineChart, Box, ChevronRight, EyeOff, X } from "lucide-react";
 import { GroceriesIcon } from "./components/GroceriesIcon";
 import { ItemDialog } from "./components/ItemDialog";
 import { CheckOffDialog } from "./components/CheckOffDialog";
@@ -114,16 +114,23 @@ export default function App() {
       setLists(dbLists);
       
       if (dbLists.length === 0) {
-        // Create an initial list
-        addDoc(collection(db, "lists"), {
-          name: "My Household",
-          ownerId: user.uid,
-          members: [user.uid],
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        }).catch(e => console.error("Error creating initial list", e));
+        // Only create an initial list if there's no ?join= parameter in the URL
+        const params = new URLSearchParams(window.location.search);
+        if (!params.get('join')) {
+          addDoc(collection(db, "lists"), {
+            name: "My Household",
+            ownerId: user.uid,
+            members: [user.uid],
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          }).catch(e => console.error("Error creating initial list", e));
+        }
       } else if (!activeListId || !dbLists.find(l => l.id === activeListId)) {
-        setActiveListId(dbLists[0].id!);
+        // If we have a join parameter, let the join effect handle setActiveListId
+        const params = new URLSearchParams(window.location.search);
+        if (!params.get('join')) {
+          setActiveListId(dbLists[0].id!);
+        }
       }
     }, (error) => {
       console.error("Error fetching lists:", error);
@@ -358,12 +365,52 @@ export default function App() {
 
   const updateEntryQuantity = async (item: GroceryItem, entryId: string, delta: number) => {
     if (!user || !activeListId || !item.id) return;
-    const newEntries = (item.inventoryEntries || []).map(e => {
+    
+    let newEntries: InventoryEntry[] = [];
+    let isModified = false;
+    
+    for (const e of (item.inventoryEntries || [])) {
         if (e.id === entryId) {
-            return { ...e, quantity: Math.max(0, e.quantity + delta) };
+            isModified = true;
+            if (e.unit === 'pcs') {
+                 if (e.quantity > 1 && delta < 0) {
+                     // Auto-split on consumption
+                     const remainingBoxes = e.quantity - 1;
+                     const newAmount = Math.max(0, (e.amount || 0) + delta);
+                     
+                     // Keep the other boxes untouched
+                     newEntries.push({ ...e, quantity: remainingBoxes });
+                     
+                     // Add the modified single box
+                     newEntries.push({ ...e, id: "temp-" + Date.now() + Math.random(), quantity: 1, amount: newAmount });
+                 } else if (e.quantity > 1 && delta > 0) {
+                     // Auto-split on addition? Unlikely they add pieces to multiple boxes at once, but let's be consistent
+                     // or maybe they just add pieces to ONE box.
+                     const remainingBoxes = e.quantity - 1;
+                     const newAmount = Math.max(0, (e.amount || 0) + delta);
+                     newEntries.push({ ...e, quantity: remainingBoxes });
+                     newEntries.push({ ...e, id: "temp-" + Date.now() + Math.random(), quantity: 1, amount: newAmount });
+                 } else {
+                     // Single box
+                     const newAmount = Math.max(0, (e.amount || 0) + delta);
+                     newEntries.push({ ...e, amount: newAmount });
+                 }
+            } else {
+                 newEntries.push({ ...e, quantity: Math.max(0, e.quantity + delta) });
+            }
+        } else {
+            newEntries.push(e);
         }
-        return e;
-    }).filter(e => e.quantity > 0);
+    }
+    
+    if (!isModified) return;
+
+    // Filter out empty boxes!
+    newEntries = newEntries.filter(e => {
+        if (e.quantity <= 0) return false;
+        if (e.unit === 'pcs' && (e.amount === undefined || e.amount <= 0)) return false;
+        return true;
+    });
     
     const newInv = newEntries.reduce((sum, e) => sum + e.quantity, 0);
     const newLocs = Array.from(new Set(newEntries.map(e => e.location).filter(Boolean)));
@@ -383,17 +430,43 @@ export default function App() {
 
   const toggleEntryStatus = async (item: GroceryItem, entryId: string) => {
     if (!user || !activeListId || !item.id) return;
-    const newEntries = (item.inventoryEntries || []).map(e => {
-      if (e.id === entryId) {
-        const isOpened = !e.isOpened;
-        return {
-          ...e,
-          isOpened,
-          openedDate: isOpened ? new Date().toISOString().split('T')[0] : (e.openedDate || "")
-        };
-      }
-      return e;
-    });
+    
+    let newEntries: InventoryEntry[] = [];
+    let isModified = false;
+
+    for (const e of (item.inventoryEntries || [])) {
+        if (e.id === entryId) {
+            isModified = true;
+            const isOpened = !e.isOpened;
+            
+            if (e.quantity > 1 && isOpened) {
+                // Auto-split: Open only ONE item out of the multiple items
+                const remainingBoxes = Number(e.quantity) - 1;
+                
+                // Keep untouched boxes
+                newEntries.push({ ...e, quantity: remainingBoxes });
+                
+                // Add the ONE opened box
+                newEntries.push({ 
+                    ...e, 
+                    id: "temp-" + Date.now() + Math.random(), 
+                    quantity: 1, 
+                    isOpened: true, 
+                    openedDate: new Date().toISOString().split('T')[0] 
+                });
+            } else {
+                newEntries.push({
+                  ...e,
+                  isOpened,
+                  openedDate: isOpened ? (e.openedDate ? e.openedDate : new Date().toISOString().split('T')[0]) : (e.openedDate || "")
+                });
+            }
+        } else {
+            newEntries.push(e);
+        }
+    }
+
+    if (!isModified) return;
 
     try {
       await updateDoc(doc(db, "lists", activeListId, "items", item.id), {
@@ -666,7 +739,14 @@ export default function App() {
                 <div key={`${group.name}-${item.id}`} onClick={() => toggleExpanded(item.id!)} className="bg-white p-3 sm:p-4 rounded-xl shadow-sm ring-1 ring-gray-900/5 flex flex-col gap-2 sm:gap-3 cursor-pointer hover:shadow-md transition-shadow">
                   <div className="flex justify-between items-start gap-2">
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium text-gray-900 truncate" title={item.name}>{item.name}</div>
+                      <div className="flex items-center gap-2">
+                        <div className="font-medium text-gray-900 truncate" title={item.name}>{item.name}</div>
+                        {!isShoppingList && item.inventoryEntries?.some(e => e.isOpened) && (
+                          <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 bg-orange-500 text-white border-none font-semibold shadow-sm">
+                            OPENED
+                          </Badge>
+                        )}
+                      </div>
                       {groupBy === 'category' && (
                         <div className="flex flex-wrap gap-1 mt-1.5">
                           {(item.locations || [item.location]).filter(Boolean).map(loc => (
@@ -710,10 +790,35 @@ export default function App() {
                              <div className="flex items-center gap-1.5 pl-1.5 border-l-2 border-gray-300">
                                  <span className="font-semibold text-gray-700">{entry.amount ? `${entry.amount} ${entry.unit || item.unit || ''}` : `${entry.unit || item.unit || 'Count'}`}</span>
                                  {entry.location && <span className="text-gray-400">at {entry.location}</span>}
+                                 <Button 
+                                    variant={entry.isOpened ? "default" : "outline"} 
+                                    size="sm" 
+                                    className={`h-5 text-[10px] px-1.5 ml-1 ${entry.isOpened ? "bg-orange-500 hover:bg-orange-600 text-white" : "text-gray-500 border-gray-300"}`}
+                                    onClick={(e) => { e.stopPropagation(); toggleEntryStatus(item, entry.id); }}
+                                 >
+                                    {entry.isOpened ? "Opened" : "Unopened"}
+                                 </Button>
                              </div>
                              {entry.label && <span className="text-gray-500 pl-2">{entry.label}</span>}
                              {entry.expiryDate && <span className={`pl-2 ${new Date(entry.expiryDate) < new Date() ? "text-red-500 font-medium" : "text-gray-400"}`}>Exp: {entry.expiryDate}</span>}
                              {(entry.dateBought || entry.dateAdded) && <div className="text-[10px] text-gray-400 pl-2">Bought: {entry.dateBought || entry.dateAdded}</div>}
+                             {entry.isOpened && (
+                                <span className="text-[10px] text-orange-600 flex items-center gap-0.5 pl-2 mt-0.5">
+                                  <span className="font-semibold uppercase text-[9px]">Opened:</span> 
+                                  <input 
+                                    type="date" 
+                                    value={entry.openedDate || ""} 
+                                    onChange={(e) => updateEntryOpenedDate(item, entry.id, e.target.value)}
+                                    className="bg-transparent border-none p-0 text-[10px] focus:ring-0 w-[85px] h-[18px]"
+                                    onClick={(e) => e.stopPropagation()}
+                                  />
+                                  {entry.openedDate && (
+                                    <Button variant="ghost" size="icon" className="h-[14px] w-[14px] flex-shrink-0 text-orange-400 hover:text-orange-600 hover:bg-orange-100/50 p-0" onClick={(e) => { e.stopPropagation(); updateEntryOpenedDate(item, entry.id, ""); }}>
+                                      <X className="w-2.5 h-2.5" />
+                                    </Button>
+                                  )}
+                                </span>
+                             )}
                              {entry.tags && entry.tags.length > 0 && (
                                <div className="flex flex-wrap gap-1 pl-2 mt-0.5">
                                  {entry.tags.map(tag => (
@@ -726,7 +831,7 @@ export default function App() {
                               <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, -1); }} title="Decrease count">
                                  <Minus className="w-3.5 h-3.5" />
                               </Button>
-                              <span className="text-sm font-medium w-6 text-center text-gray-800">{entry.quantity}</span>
+                              <span className="text-sm font-medium w-6 text-center text-gray-800">{entry.unit === 'pcs' ? (entry.amount || 0) : entry.quantity}</span>
                               <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, 1); }} title="Increase count">
                                  <Plus className="w-3.5 h-3.5" />
                               </Button>
@@ -849,13 +954,13 @@ export default function App() {
                   threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
                   const p3mStr = threeMonthsAgo.toISOString().split('T')[0];
                   const p3mEntries = sortedPrices.filter(e => e.date >= p3mStr);
-                  const p3mLow = p3mEntries.length ? p3mEntries.reduce((min, e) => e.price < min.price ? e : min, p3mEntries[0]) : null;
+                  const p3mLow = p3mEntries.length ? p3mEntries.reduce((min, e) => (e.price / (e.quantity || 1)) < (min.price / (min.quantity || 1)) ? e : min, p3mEntries[0]) : null;
 
                   const twelveMonthsAgo = new Date();
                   twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
                   const p12mStr = twelveMonthsAgo.toISOString().split('T')[0];
                   const p12mEntries = sortedPrices.filter(e => e.date >= p12mStr);
-                  const p12mLow = p12mEntries.length ? p12mEntries.reduce((min, e) => e.price < min.price ? e : min, p12mEntries[0]) : null;
+                  const p12mLow = p12mEntries.length ? p12mEntries.reduce((min, e) => (e.price / (e.quantity || 1)) < (min.price / (min.quantity || 1)) ? e : min, p12mEntries[0]) : null;
 
                   priceInsights = { lastPurchase, p3mLow, p12mLow };
                 }
@@ -864,7 +969,14 @@ export default function App() {
                 <div key={item.id} className={`${(isShoppingList || isSuggested) ? 'p-2.5 sm:p-3' : 'p-3 sm:p-4'} bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 flex flex-col gap-2`}>
                   <div className="flex justify-between items-start gap-2">
                     <div className="flex-1 min-w-0">
-                      <div className={`${(isShoppingList || isSuggested) ? 'text-sm' : 'text-base'} font-medium text-gray-900 truncate`} title={item.name}>{item.name}</div>
+                      <div className="flex items-center gap-2">
+                        <div className={`${(isShoppingList || isSuggested) ? 'text-sm' : 'text-base'} font-medium text-gray-900 truncate`} title={item.name}>{item.name}</div>
+                        {!isShoppingList && !isSuggested && item.inventoryEntries?.some(e => e.isOpened) && (
+                          <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 bg-orange-500 text-white border-none font-semibold shadow-sm shrink-0">
+                            OPENED
+                          </Badge>
+                        )}
+                      </div>
                       {(item.locations && item.locations.length > 0) ? (
                         <div className={`flex flex-wrap gap-1 ${(isShoppingList || isSuggested) ? 'mt-1' : 'mt-1.5'}`}>
                           {item.locations.map(loc => (
@@ -931,19 +1043,22 @@ export default function App() {
                         {priceInsights.lastPurchase && (
                           <div>
                             <span className="block text-[9px] uppercase tracking-wider text-slate-400 font-semibold">Last</span>
-                            <span className="font-medium">${priceInsights.lastPurchase.price.toFixed(2)}</span> <span className="text-slate-400 truncate block max-w-full" title={priceInsights.lastPurchase.store}>@ {priceInsights.lastPurchase.store}</span>
+                            <span className="font-medium">${(priceInsights.lastPurchase.price / (priceInsights.lastPurchase.quantity || 1)).toFixed(2)}</span> 
+                            <span className="text-slate-400 truncate block max-w-full" title={priceInsights.lastPurchase.store}>@ {priceInsights.lastPurchase.store}</span>
                           </div>
                         )}
                         {priceInsights.p3mLow && (
                           <div>
                              <span className="block text-[9px] uppercase tracking-wider text-slate-400 font-semibold">3M Low</span>
-                             <span className="font-medium">${priceInsights.p3mLow.price.toFixed(2)}</span> <span className="text-slate-400 truncate block max-w-full" title={priceInsights.p3mLow.store}>@ {priceInsights.p3mLow.store}</span>
+                             <span className="font-medium">${(priceInsights.p3mLow.price / (priceInsights.p3mLow.quantity || 1)).toFixed(2)}</span> 
+                             <span className="text-slate-400 truncate block max-w-full" title={priceInsights.p3mLow.store}>@ {priceInsights.p3mLow.store}</span>
                           </div>
                         )}
                         {!priceInsights.p3mLow && priceInsights.p12mLow && (
                           <div>
                              <span className="block text-[9px] uppercase tracking-wider text-slate-400 font-semibold">12M Low</span>
-                             <span className="font-medium">${priceInsights.p12mLow.price.toFixed(2)}</span> <span className="text-slate-400 truncate block max-w-full" title={priceInsights.p12mLow.store}>@ {priceInsights.p12mLow.store}</span>
+                             <span className="font-medium">${(priceInsights.p12mLow.price / (priceInsights.p12mLow.quantity || 1)).toFixed(2)}</span> 
+                             <span className="text-slate-400 truncate block max-w-full" title={priceInsights.p12mLow.store}>@ {priceInsights.p12mLow.store}</span>
                           </div>
                         )}
                       </div>
@@ -977,15 +1092,20 @@ export default function App() {
                                    <span className="font-semibold uppercase text-[9px]">Exp:</span> {entry.expiryDate}
                                  </span>
                                )}
-                               {entry.isOpened && entry.openedDate && (
+                               {entry.isOpened && (
                                  <span className="text-[10px] text-orange-600 flex items-center gap-0.5">
                                    <span className="font-semibold uppercase text-[9px]">Opened:</span> 
                                    <input 
                                      type="date" 
-                                     value={entry.openedDate} 
+                                     value={entry.openedDate || ""} 
                                      onChange={(e) => updateEntryOpenedDate(item, entry.id, e.target.value)}
-                                     className="bg-transparent border-none p-0 text-[10px] focus:ring-0 w-[85px]"
+                                     className="bg-transparent border-none p-0 text-[10px] focus:ring-0 w-[85px] h-[18px]"
                                    />
+                                   {entry.openedDate && (
+                                     <Button variant="ghost" size="icon" className="h-[14px] w-[14px] ml-0.5 text-orange-400 hover:text-orange-600 hover:bg-orange-100/50 p-0" onClick={(e) => { e.stopPropagation(); updateEntryOpenedDate(item, entry.id, ""); }}>
+                                       <X className="w-2.5 h-2.5" />
+                                     </Button>
+                                   )}
                                  </span>
                                )}
                                {entry.tags && entry.tags.length > 0 && (
@@ -1001,7 +1121,7 @@ export default function App() {
                               <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, -1); }} title="Decrease count">
                                  <Minus className="w-3.5 h-3.5" />
                               </Button>
-                              <span className="text-sm font-medium w-6 text-center text-gray-800">{entry.quantity}</span>
+                              <span className="text-sm font-medium w-6 text-center text-gray-800">{entry.unit === 'pcs' ? (entry.amount || 0) : entry.quantity}</span>
                               <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, 1); }} title="Increase count">
                                  <Plus className="w-3.5 h-3.5" />
                               </Button>
@@ -1066,7 +1186,11 @@ export default function App() {
     try {
       await signIn();
     } catch (error: any) {
-      setAuthError(error?.message || "Failed to sign in");
+      if (error?.message?.includes('popup') || error?.code?.includes('popup')) {
+        setAuthError("Login popup was blocked or closed. Please click 'Sign in' again, allow popups in your browser, or open the app in a new tab to sign in.");
+      } else {
+        setAuthError(error?.message || "Failed to sign in");
+      }
     }
   };
 

@@ -7,6 +7,7 @@ export const CATEGORIES = [
   "Beverages",
   "Snacks",
   "Household",
+  "Dog Supplies",
   "Other"
 ] as const;
 
@@ -51,6 +52,7 @@ export interface PriceEntry {
   id: string;
   date: string;
   price: number;
+  quantity: number;
   unitStr: string;
   store: string;
   isDiscount?: boolean;
