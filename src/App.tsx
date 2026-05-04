@@ -363,6 +363,33 @@ export default function App() {
     }
   };
 
+  const handleMoveEntry = async (item: GroceryItem, entryId: string, newLocation: string) => {
+    if (!user || !activeListId || !item.id) return;
+    
+    let isModified = false;
+    const newEntries = (item.inventoryEntries || []).map(e => {
+        if (e.id === entryId && e.location !== newLocation) {
+            isModified = true;
+            return { ...e, location: newLocation };
+        }
+        return e;
+    });
+    
+    if (!isModified) return;
+    
+    const newLocs = Array.from(new Set(newEntries.map(e => e.location).filter(Boolean)));
+    try {
+      await updateDoc(doc(db, "lists", activeListId, "items", item.id), {
+        inventoryEntries: newEntries,
+        locations: newLocs,
+        updatedAt: serverTimestamp()
+      });
+    } catch (error) {
+      console.error("Error moving entry:", error);
+      handleFirestoreError(error, 'update', `lists/${activeListId}/items/${item.id}`);
+    }
+  };
+
   const updateEntryQuantity = async (item: GroceryItem, entryId: string, delta: number) => {
     if (!user || !activeListId || !item.id) return;
     
@@ -372,29 +399,10 @@ export default function App() {
     for (const e of (item.inventoryEntries || [])) {
         if (e.id === entryId) {
             isModified = true;
-            if (e.unit === 'pcs') {
-                 if (e.quantity > 1 && delta < 0) {
-                     // Auto-split on consumption
-                     const remainingBoxes = e.quantity - 1;
-                     const newAmount = Math.max(0, (e.amount || 0) + delta);
-                     
-                     // Keep the other boxes untouched
-                     newEntries.push({ ...e, quantity: remainingBoxes });
-                     
-                     // Add the modified single box
-                     newEntries.push({ ...e, id: "temp-" + Date.now() + Math.random(), quantity: 1, amount: newAmount });
-                 } else if (e.quantity > 1 && delta > 0) {
-                     // Auto-split on addition? Unlikely they add pieces to multiple boxes at once, but let's be consistent
-                     // or maybe they just add pieces to ONE box.
-                     const remainingBoxes = e.quantity - 1;
-                     const newAmount = Math.max(0, (e.amount || 0) + delta);
-                     newEntries.push({ ...e, quantity: remainingBoxes });
-                     newEntries.push({ ...e, id: "temp-" + Date.now() + Math.random(), quantity: 1, amount: newAmount });
-                 } else {
-                     // Single box
-                     const newAmount = Math.max(0, (e.amount || 0) + delta);
-                     newEntries.push({ ...e, amount: newAmount });
-                 }
+            if (e.isOpened && e.unit === 'pcs') {
+                // If it's opened and unit is pcs, +/- modifies the amount (e.g. number of pieces left)
+                const newAmount = Math.max(0, (e.amount || 0) + delta);
+                newEntries.push({ ...e, amount: newAmount });
             } else {
                  newEntries.push({ ...e, quantity: Math.max(0, e.quantity + delta) });
             }
@@ -788,8 +796,21 @@ export default function App() {
                          <div key={entry.id} className="p-2 flex justify-between items-center hover:bg-gray-50 transition-colors">
                            <div className="flex flex-col gap-0.5">
                              <div className="flex items-center gap-1.5 pl-1.5 border-l-2 border-gray-300">
-                                 <span className="font-semibold text-gray-700">{entry.amount ? `${entry.amount} ${entry.unit || item.unit || ''}` : `${entry.unit || item.unit || 'Count'}`}</span>
-                                 {entry.location && <span className="text-gray-400">at {entry.location}</span>}
+                                 <span className="font-semibold text-gray-700">
+                                   {entry.isOpened && entry.unit === 'pcs' ? 
+                                      (entry.amount ? `${entry.amount} ${entry.unit || item.unit || ''}` : `1 ${entry.unit || item.unit || ''}`) : 
+                                      (entry.amount ? `${entry.quantity} x ${entry.amount} ${entry.unit || item.unit || ''}` : `${entry.quantity} ${entry.unit || item.unit || 'Count'}`)
+                                   }
+                                 </span>
+                                 <select 
+                                     value={entry.location || ''} 
+                                     onChange={(e) => handleMoveEntry(item, entry.id, e.target.value)} 
+                                     onClick={(e) => e.stopPropagation()}
+                                     className="appearance-none bg-gray-100/50 hover:bg-gray-100 border-none text-[10px] text-gray-500 rounded px-1.5 py-0.5 cursor-pointer focus:ring-0 w-fit max-w-[120px] truncate ml-1"
+                                 >
+                                     <option value="" disabled>Location</option>
+                                     {locations.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                                 </select>
                                  <Button 
                                     variant={entry.isOpened ? "default" : "outline"} 
                                     size="sm" 
@@ -831,7 +852,7 @@ export default function App() {
                               <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, -1); }} title="Decrease count">
                                  <Minus className="w-3.5 h-3.5" />
                               </Button>
-                              <span className="text-sm font-medium w-6 text-center text-gray-800">{entry.unit === 'pcs' ? (entry.amount || 0) : entry.quantity}</span>
+                              <span className="text-sm font-medium w-6 text-center text-gray-800">{entry.isOpened && entry.unit === 'pcs' ? (entry.amount || 0) : entry.quantity}</span>
                               <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, 1); }} title="Increase count">
                                  <Plus className="w-3.5 h-3.5" />
                               </Button>
@@ -1075,8 +1096,22 @@ export default function App() {
                        {(item.inventoryEntries || []).map(entry => (
                          <div key={entry.id} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg border border-gray-100 group">
                            <div className="min-w-0 flex-1">
-                             <div className="flex items-center gap-2">
-                               <span className="text-xs font-semibold text-gray-700">{entry.location}</span>
+                             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                               <span className="text-[11px] font-bold text-gray-800">
+                                   {entry.isOpened && entry.unit === 'pcs' ? 
+                                      (entry.amount ? `${entry.amount} ${entry.unit || item.unit || ''}` : `1 ${entry.unit || item.unit || ''}`) : 
+                                      (entry.amount ? `${entry.quantity} x ${entry.amount} ${entry.unit || item.unit || ''}` : `${entry.quantity} ${entry.unit || item.unit || 'Count'}`)
+                                   }
+                               </span>
+                               <select 
+                                   value={entry.location || ''} 
+                                   onChange={(e) => handleMoveEntry(item, entry.id, e.target.value)} 
+                                   onClick={(e) => e.stopPropagation()}
+                                   className="appearance-none bg-gray-100/50 hover:bg-gray-100 border-none text-[10px] text-gray-500 rounded px-1.5 py-0.5 cursor-pointer focus:ring-0 w-fit max-w-[120px] truncate"
+                               >
+                                   <option value="" disabled>Move...</option>
+                                   {locations.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                               </select>
                                <Button 
                                  variant={entry.isOpened ? "default" : "outline"} 
                                  size="sm" 
@@ -1121,7 +1156,7 @@ export default function App() {
                               <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, -1); }} title="Decrease count">
                                  <Minus className="w-3.5 h-3.5" />
                               </Button>
-                              <span className="text-sm font-medium w-6 text-center text-gray-800">{entry.unit === 'pcs' ? (entry.amount || 0) : entry.quantity}</span>
+                              <span className="text-sm font-medium w-6 text-center text-gray-800">{entry.isOpened && entry.unit === 'pcs' ? (entry.amount || 0) : entry.quantity}</span>
                               <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, 1); }} title="Increase count">
                                  <Plus className="w-3.5 h-3.5" />
                               </Button>

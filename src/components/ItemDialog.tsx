@@ -63,7 +63,7 @@ function TagInput({ tags, onChange }: { tags: string[], onChange: (tags: string[
   );
 }
 
-const PRESET_UNITS = ["pcs", "g", "kg", "ml", "L", "oz", "lb", "unit", "pack", "bottle", "can", "box", "bag"];
+const PRESET_UNITS = ["pcs", "g", "kg", "mL", "L"];
 
 const LocationSelect = ({ value, onChange, locations, className }: { value: string, onChange: (v: string) => void, locations: string[], className: string }) => {
   const isOther = value && !locations.includes(value);
@@ -763,7 +763,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
               ))}
             </datalist>
             <datalist id="units-list">
-              {["g", "kg", "ml", "L", "oz", "lb", "unit", "pack", "bottle", "can", "box", "bag"].map(u => (
+              {["pcs", "g", "kg", "mL", "L"].map(u => (
                 <option key={u} value={u} />
               ))}
             </datalist>
