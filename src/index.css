@@ -123,9 +123,11 @@
     }
   body {
     @apply bg-background text-foreground;
+    overscroll-behavior: none;
     }
   html {
     @apply font-sans;
+    overscroll-behavior: none;
     }
   /* Prevent mobile zoom on focus */
   input, textarea, select {

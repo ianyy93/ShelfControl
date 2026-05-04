@@ -378,7 +378,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4 pt-4 max-h-[80vh] overflow-y-auto px-1">
+        <form onSubmit={handleSubmit} className="space-y-4 pt-4 max-h-[80vh] overflow-y-auto overflow-x-hidden overscroll-none px-1">
           <div className="space-y-3">
              <Label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Quick Actions / Modes</Label>
              <Tabs value={mode} onValueChange={handleModeChange} className="w-full">

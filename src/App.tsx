@@ -5,8 +5,9 @@ import { onAuthStateChanged, User } from "firebase/auth";
 import { collection, onSnapshot, query, addDoc, serverTimestamp, doc, deleteDoc, updateDoc, where, getDoc, arrayUnion } from "firebase/firestore";
 import { GroceryItem, GroceryList, CATEGORIES, InventoryEntry, PRESET_LOCATIONS, PriceEntry } from "./types";
 import { Button } from "./components/ui/button";
-import { Plus, LogOut, Trash2, Edit, ShoppingCart, Check, Minus, Users, Link as LinkIcon, LineChart, Box, ChevronRight, EyeOff, X } from "lucide-react";
+import { Plus, LogOut, Trash2, Edit, ShoppingCart, Check, Minus, Users, Link as LinkIcon, LineChart, Box, ChevronRight, ChevronDown, EyeOff, X } from "lucide-react";
 import { GroceriesIcon } from "./components/GroceriesIcon";
+import { MoveEntryDialog } from "./components/MoveEntryDialog";
 import { ItemDialog } from "./components/ItemDialog";
 import { CheckOffDialog } from "./components/CheckOffDialog";
 import { PriceAnalysisTab } from "./components/PriceAnalysisTab";
@@ -363,17 +364,42 @@ export default function App() {
     }
   };
 
+  const [moveDialogState, setMoveDialogState] = useState<{item: GroceryItem, entryId: string, newLocation: string} | null>(null);
+
   const handleMoveEntry = async (item: GroceryItem, entryId: string, newLocation: string) => {
     if (!user || !activeListId || !item.id) return;
     
+    const entry = (item.inventoryEntries || []).find(e => e.id === entryId);
+    if (!entry) return;
+
+    if (entry.quantity > 1) {
+        setMoveDialogState({ item, entryId, newLocation });
+        return;
+    }
+    
+    await executeMoveEntry(item, entryId, newLocation, entry.quantity);
+  };
+
+  const executeMoveEntry = async (item: GroceryItem, entryId: string, newLocation: string, quantityToMove: number) => {
+    if (!user || !activeListId || !item.id) return;
+    
     let isModified = false;
-    const newEntries = (item.inventoryEntries || []).map(e => {
+    let newEntries: InventoryEntry[] = [];
+    
+    for (const e of (item.inventoryEntries || [])) {
         if (e.id === entryId && e.location !== newLocation) {
             isModified = true;
-            return { ...e, location: newLocation };
+            if (quantityToMove >= e.quantity) {
+                newEntries.push({ ...e, location: newLocation });
+            } else {
+                const remaining = e.quantity - quantityToMove;
+                newEntries.push({ ...e, quantity: remaining });
+                newEntries.push({ ...e, id: "temp-" + Date.now() + Math.random().toString(36).substr(2, 9), quantity: quantityToMove, location: newLocation, isOpened: false, openedDate: undefined });
+            }
+        } else {
+            newEntries.push(e);
         }
-        return e;
-    });
+    }
     
     if (!isModified) return;
     
@@ -802,15 +828,18 @@ export default function App() {
                                       (entry.amount ? `${entry.quantity} x ${entry.amount} ${entry.unit || item.unit || ''}` : `${entry.quantity} ${entry.unit || item.unit || 'Count'}`)
                                    }
                                  </span>
-                                 <select 
-                                     value={entry.location || ''} 
-                                     onChange={(e) => handleMoveEntry(item, entry.id, e.target.value)} 
-                                     onClick={(e) => e.stopPropagation()}
-                                     className="appearance-none bg-gray-100/50 hover:bg-gray-100 border-none text-[10px] text-gray-500 rounded px-1.5 py-0.5 cursor-pointer focus:ring-0 w-fit max-w-[120px] truncate ml-1"
-                                 >
-                                     <option value="" disabled>Location</option>
-                                     {locations.map(loc => <option key={loc} value={loc}>{loc}</option>)}
-                                 </select>
+                                 <div className="relative inline-flex items-center ml-1">
+                                   <select 
+                                       value={entry.location || ''} 
+                                       onChange={(e) => handleMoveEntry(item, entry.id, e.target.value)} 
+                                       onClick={(e) => e.stopPropagation()}
+                                       className="appearance-none bg-blue-50/50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[10px] font-medium rounded pl-1.5 pr-4 py-0.5 cursor-pointer focus:ring-0 max-w-[120px] truncate"
+                                   >
+                                       <option value="" disabled>Move...</option>
+                                       {locations.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                                   </select>
+                                   <ChevronDown className="w-2.5 h-2.5 text-blue-500 absolute right-1 top-1/2 -translate-y-1/2 pointer-events-none" />
+                                 </div>
                                  <Button 
                                     variant={entry.isOpened ? "default" : "outline"} 
                                     size="sm" 
@@ -1103,15 +1132,18 @@ export default function App() {
                                       (entry.amount ? `${entry.quantity} x ${entry.amount} ${entry.unit || item.unit || ''}` : `${entry.quantity} ${entry.unit || item.unit || 'Count'}`)
                                    }
                                </span>
-                               <select 
-                                   value={entry.location || ''} 
-                                   onChange={(e) => handleMoveEntry(item, entry.id, e.target.value)} 
-                                   onClick={(e) => e.stopPropagation()}
-                                   className="appearance-none bg-gray-100/50 hover:bg-gray-100 border-none text-[10px] text-gray-500 rounded px-1.5 py-0.5 cursor-pointer focus:ring-0 w-fit max-w-[120px] truncate"
-                               >
-                                   <option value="" disabled>Move...</option>
-                                   {locations.map(loc => <option key={loc} value={loc}>{loc}</option>)}
-                               </select>
+                               <div className="relative inline-flex items-center">
+                                 <select 
+                                     value={entry.location || ''} 
+                                     onChange={(e) => handleMoveEntry(item, entry.id, e.target.value)} 
+                                     onClick={(e) => e.stopPropagation()}
+                                     className="appearance-none bg-blue-50/50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[10px] font-medium rounded pl-1.5 pr-4 py-0.5 cursor-pointer focus:ring-0 max-w-[120px] truncate"
+                                 >
+                                     <option value="" disabled>Move...</option>
+                                     {locations.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                                 </select>
+                                 <ChevronDown className="w-2.5 h-2.5 text-blue-500 absolute right-1 top-1/2 -translate-y-1/2 pointer-events-none" />
+                               </div>
                                <Button 
                                  variant={entry.isOpened ? "default" : "outline"} 
                                  size="sm" 
@@ -1383,6 +1415,19 @@ export default function App() {
         locations={locations}
         title={editingItem ? "Edit Item" : "Add New Item"}
         defaultMode={activeTab}
+      />
+
+      <MoveEntryDialog 
+        isOpen={!!moveDialogState}
+        onOpenChange={(open) => { if (!open) setMoveDialogState(null); }}
+        item={moveDialogState?.item || null}
+        entryId={moveDialogState?.entryId || null}
+        newLocation={moveDialogState?.newLocation || null}
+        onConfirm={(quantity) => {
+           if (moveDialogState) {
+               executeMoveEntry(moveDialogState.item, moveDialogState.entryId, moveDialogState.newLocation, quantity);
+           }
+        }}
       />
       
       <CheckOffDialog
