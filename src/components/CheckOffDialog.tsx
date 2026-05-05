@@ -67,19 +67,25 @@ export function CheckOffDialog({ open, onOpenChange, item, onConfirm }: CheckOff
     if (trackPrice) {
       let finalPrice = Number(price);
       let finalUnit = priceUnit || item.unit || "unit";
+      let finalQuantity = 1;
       
       if (isDiscount) {
-          finalPrice = Number(dealPrice) / Number(dealQuantity);
-          finalUnit = `${dealQuantity} ${priceUnit || item.unit || "unit"}`;
+          finalPrice = Number(dealPrice);
+          finalQuantity = Number(dealQuantity);
       }
 
       priceEntry = {
         date,
         price: finalPrice,
+        quantity: finalQuantity,
         unitStr: finalUnit,
         store: store || "Unknown",
-        isDiscount
+        isDiscount: !!isDiscount
       };
+      if (isDiscount) {
+        priceEntry.dealPrice = Number(dealPrice);
+        priceEntry.dealQuantity = Number(dealQuantity);
+      }
     }
 
     try {

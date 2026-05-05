@@ -285,14 +285,25 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
 
   const addInventoryEntry = () => {
     const today = new Date().toISOString().split('T')[0];
-    setInventoryEntries([...inventoryEntries, { 
-      id: Math.random().toString(36).substr(2, 9), 
-      location: "", 
-      quantity: 1, 
-      unit: unit || item?.unit || "",
-      dateBought: today,
-      dateAdded: today
-    }]);
+    const prevEntry = inventoryEntries.length > 0 ? inventoryEntries[inventoryEntries.length - 1] : null;
+
+    if (prevEntry) {
+        setInventoryEntries([...inventoryEntries, {
+            ...prevEntry,
+            id: Math.random().toString(36).substr(2, 9),
+            isOpened: false,
+            openedDate: undefined
+        }]);
+    } else {
+        setInventoryEntries([...inventoryEntries, { 
+          id: Math.random().toString(36).substr(2, 9), 
+          location: "", 
+          quantity: 1, 
+          unit: unit || item?.unit || "",
+          dateBought: today,
+          dateAdded: today
+        }]);
+    }
   };
 
   const removeInventoryEntry = (id: string) => {

@@ -10,9 +10,10 @@ import { GroceriesIcon } from "./components/GroceriesIcon";
 import { MoveEntryDialog } from "./components/MoveEntryDialog";
 import { ItemDialog } from "./components/ItemDialog";
 import { CheckOffDialog } from "./components/CheckOffDialog";
-import { PriceAnalysisTab } from "./components/PriceAnalysisTab";
+import { SearchTab } from "./components/SearchTab";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Badge } from "./components/ui/badge";
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "./components/ui/accordion";
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -27,7 +28,7 @@ export default function App() {
   const [editingItem, setEditingItem] = useState<GroceryItem | undefined>();
   const [checkingOffItem, setCheckingOffItem] = useState<GroceryItem | undefined>();
 
-  const [activeTab, setActiveTab] = useState<'shopping' | 'inventory' | 'prices'>('shopping');
+  const [activeTab, setActiveTab] = useState<'shopping' | 'inventory' | 'search'>('shopping');
   const [priceAnalysisItemId, setPriceAnalysisItemId] = useState<string | null>(null);
 
   const handleGoToPriceAnalysis = (itemId: string) => {
@@ -43,7 +44,7 @@ export default function App() {
 
   // View Options for All Tabs
   const [isFilterExpanded, setIsFilterExpanded] = useState(false);
-  const [groupBy, setGroupBy] = useState<'category' | 'location'>('category');
+  const [groupBy, setGroupBy] = useState<'category' | 'location'>('location');
   const [sortBy, setSortBy] = useState<'name' | 'quantity' | 'expiryDate' | 'dateBought' | 'dateAdded'>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [filterCat, setFilterCat] = useState<string>('All');
@@ -583,8 +584,12 @@ export default function App() {
           >
             {isFilterExpanded ? "Hide Filters" : "Show Filters"}
           </Button>
-          <div className="text-sm text-gray-500 hidden sm:block">
-            {activeTab === 'shopping' ? `${shoppingItems.length} items to buy` : `${inventoryItems.length} total items`}
+          <div className="flex items-center bg-gray-100 rounded-lg p-1 ml-2">
+             <button onClick={() => setGroupBy('location')} className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${groupBy === 'location' ? 'bg-white shadow-sm text-gray-900 border border-gray-200/50' : 'text-gray-500 hover:text-gray-700'}`}>Location</button>
+             <button onClick={() => setGroupBy('category')} className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${groupBy === 'category' ? 'bg-white shadow-sm text-gray-900 border border-gray-200/50' : 'text-gray-500 hover:text-gray-700'}`}>Category</button>
+          </div>
+          <div className="text-sm text-gray-500 hidden sm:block ml-2">
+            {activeTab === 'shopping' ? `${shoppingItems.length} to buy` : `${inventoryItems.length} items`}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -602,15 +607,7 @@ export default function App() {
             transition={{ duration: 0.3, ease: "easeInOut" }}
             className="overflow-hidden"
           >
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 bg-white p-3 sm:p-4 rounded-xl border border-gray-200 shadow-sm text-sm">
-               <div className="flex flex-col gap-1.5">
-                 <label className="font-semibold text-gray-700 text-xs uppercase tracking-wider">Group by</label>
-                 <select value={groupBy} onChange={e => setGroupBy(e.target.value as 'category' | 'location')} className="bg-gray-50 border rounded-md p-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500">
-                   <option value="category">Category</option>
-                   <option value="location">Location</option>
-                 </select>
-               </div>
-               
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-3 sm:gap-4 bg-white p-3 sm:p-4 rounded-xl border border-gray-200 shadow-sm text-sm">
                <div className="flex flex-col gap-1.5">
                  <label className="font-semibold text-gray-700 text-xs uppercase tracking-wider">Sort by</label>
                  <div className="flex gap-2">
@@ -764,12 +761,17 @@ export default function App() {
     }
 
     return (
-      <div className="space-y-6 sm:space-y-8 mt-4 sm:mt-6">
+      <Accordion type="single" collapsible className="space-y-4 mt-4 sm:mt-6 w-full">
         {groups.map(group => (
-          <div key={group.name} className="space-y-4">
-            <h3 className="font-semibold text-lg text-gray-800 border-b pb-2">{group.name}</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-              {group.items.map(item => (
+          <AccordionItem key={group.name} value={group.name} className="border border-gray-200 bg-white rounded-xl shadow-sm overflow-hidden data-[state=open]:pb-4">
+            <AccordionTrigger className="hover:no-underline px-4 py-4 font-semibold text-lg text-gray-800 transition-colors hover:bg-gray-50/50">
+              <div className="flex items-center gap-2">
+                 {group.name} <Badge variant="secondary" className="ml-2 bg-gray-100 text-gray-600 border-none font-medium">{group.items.length}</Badge>
+              </div>
+            </AccordionTrigger>
+            <AccordionContent className="px-4 pt-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+                {group.items.map(item => (
                 <div key={`${group.name}-${item.id}`} onClick={() => toggleExpanded(item.id!)} className="bg-white p-3 sm:p-4 rounded-xl shadow-sm ring-1 ring-gray-900/5 flex flex-col gap-2 sm:gap-3 cursor-pointer hover:shadow-md transition-shadow">
                   <div className="flex justify-between items-start gap-2">
                     <div className="flex-1 min-w-0">
@@ -803,8 +805,14 @@ export default function App() {
                         <Button variant="ghost" size="icon" className="h-6 w-6 text-gray-400 hover:text-blue-600" onClick={() => { setEditingItem(item); setIsDialogOpen(true); }}>
                           <Edit className="w-3.5 h-3.5" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-6 w-6 text-gray-400 hover:text-red-700" onClick={() => {
-                          if (item.shoppingQuantity === 0 && (!item.priceHistory || item.priceHistory.length === 0) && (!item.unprocessedQuantity || item.unprocessedQuantity === 0)) {
+                        <Button variant="ghost" size="icon" className="h-6 w-6 text-red-400 hover:text-red-700" onClick={(e) => {
+                          e.stopPropagation();
+                          const hasHistory = (item.priceHistory || []).length > 0;
+                          const hasUnprocessed = (item.unprocessedQuantity || 0) > 0;
+                          const hasShopping = item.shoppingQuantity > 0;
+                          const hasImportantData = hasHistory || hasUnprocessed || hasShopping;
+
+                          if (!hasImportantData) {
                               handleDelete(item.id!);
                           } else {
                               handleUpdateItem(item.id!, { inventoryQuantity: 0, inventoryEntries: [] });
@@ -895,9 +903,10 @@ export default function App() {
                 </div>
               ))}
             </div>
-          </div>
-        ))}
-      </div>
+          </AccordionContent>
+        </AccordionItem>
+      ))}
+    </Accordion>
     );
   };
 
@@ -1052,11 +1061,12 @@ export default function App() {
                           <EyeOff className="w-3.5 h-3.5" />
                         </Button>
                       )}
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setEditingItem(item); setIsDialogOpen(true); }}>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); setEditingItem(item); setIsDialogOpen(true); }}>
                         <Edit className="w-3.5 h-3.5" />
                       </Button>
                       {!isSuggested && (
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500 hover:text-red-700" onClick={() => {
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500 hover:text-red-700" onClick={(e) => {
+                          e.stopPropagation();
                           const hasHistory = (item.priceHistory || []).length > 0;
                           const hasUnprocessed = (item.unprocessedQuantity || 0) > 0;
                           const hasInventory = item.inventoryQuantity > 0;
@@ -1064,21 +1074,12 @@ export default function App() {
 
                           if (isShoppingList) {
                               if (!hasImportantData) {
-                                  if (confirm(`Delete "${item.name}" entirely?`)) {
-                                      handleDelete(item.id!);
-                                  }
+                                  handleDelete(item.id!);
                               } else {
                                   handleUpdateItem(item.id!, { shoppingQuantity: 0 });
                               }
                           } else {
-                              // This is from inventory
-                              const msg = hasHistory 
-                                  ? `Delete "${item.name}"? This will also remove its price history.`
-                                  : `Delete "${item.name}"?`;
-                              
-                              if (confirm(msg)) {
-                                  handleDelete(item.id!);
-                              }
+                              handleDelete(item.id!);
                           }
                         }}>
                           <Trash2 className="w-3.5 h-3.5" />
@@ -1333,7 +1334,7 @@ export default function App() {
       </header>
 
       <main className="flex-1 max-w-5xl w-full mx-auto px-2 sm:px-6 lg:px-8 pb-8 pt-0">
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'shopping' | 'inventory' | 'prices')} className="w-full">
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'shopping' | 'inventory' | 'search')} className="w-full">
           <div className="sticky top-14 z-20 bg-gray-50 pt-4 pb-2 mb-4 -mx-2 px-2 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 border-b border-gray-200/50">
             <TabsList className="grid w-full lg:w-[898px] max-w-full grid-cols-3 bg-gray-200/50 rounded-xl h-auto min-h-[44px] sm:min-h-[42px] p-1 gap-1">
             <TabsTrigger value="shopping" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm py-2 px-1 flex-col sm:flex-row h-auto min-h-full">
@@ -1345,9 +1346,9 @@ export default function App() {
               <Box className="w-4 h-4 mb-1 sm:mb-0 sm:mr-2 shrink-0" />
               <span className="text-[10px] sm:text-sm leading-tight text-center sm:text-left break-words max-w-full">Pantry Inventory</span>
             </TabsTrigger>
-            <TabsTrigger value="prices" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm py-2 px-1 flex-col sm:flex-row h-auto min-h-full">
+            <TabsTrigger value="search" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm py-2 px-1 flex-col sm:flex-row h-auto min-h-full">
               <LineChart className="w-4 h-4 mb-1 sm:mb-0 sm:mr-2 shrink-0" />
-              <span className="text-[10px] sm:text-sm leading-tight text-center sm:text-left break-words max-w-full">Price Analysis</span>
+              <span className="text-[10px] sm:text-sm leading-tight text-center sm:text-left break-words max-w-full">Item Search</span>
             </TabsTrigger>
           </TabsList>
           </div>
@@ -1400,8 +1401,8 @@ export default function App() {
             {renderControls()}
             {renderInventoryItems()}
           </TabsContent>
-          <TabsContent value="prices" className="focus-visible:outline-none">
-            <PriceAnalysisTab items={items} onUpdateItem={handleUpdateItem} selectedItemId={priceAnalysisItemId} onSelectItemId={setPriceAnalysisItemId} />
+          <TabsContent value="search" className="focus-visible:outline-none">
+            <SearchTab items={items} onUpdateItem={handleUpdateItem} />
           </TabsContent>
         </Tabs>
       </main>
