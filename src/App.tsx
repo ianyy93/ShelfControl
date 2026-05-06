@@ -828,15 +828,8 @@ export default function App() {
                         </Button>
                         <Button variant="ghost" size="icon" className="h-6 w-6 text-red-400 hover:text-red-700" onClick={(e) => {
                           e.stopPropagation();
-                          const hasHistory = (item.priceHistory || []).length > 0;
-                          const hasUnprocessed = (item.unprocessedQuantity || 0) > 0;
-                          const hasShopping = item.shoppingQuantity > 0;
-                          const hasImportantData = hasHistory || hasUnprocessed || hasShopping;
-
-                          if (!hasImportantData) {
+                          if (window.confirm("Are you sure you want to delete this completely?")) {
                               handleDelete(item.id!);
-                          } else {
-                              handleUpdateItem(item.id!, { inventoryQuantity: 0, inventoryEntries: [] });
                           }
                         }}>
                           <Trash2 className="w-3.5 h-3.5" />
@@ -1101,19 +1094,12 @@ export default function App() {
                       {!isSuggested && (
                         <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500 hover:text-red-700" onClick={(e) => {
                           e.stopPropagation();
-                          const hasHistory = (item.priceHistory || []).length > 0;
-                          const hasUnprocessed = (item.unprocessedQuantity || 0) > 0;
-                          const hasInventory = item.inventoryQuantity > 0;
-                          const hasImportantData = hasHistory || hasUnprocessed || hasInventory;
-
                           if (isShoppingList) {
-                              if (!hasImportantData) {
-                                  handleDelete(item.id!);
-                              } else {
-                                  handleUpdateItem(item.id!, { shoppingQuantity: 0 });
-                              }
+                              handleUpdateItem(item.id!, { shoppingQuantity: 0 });
                           } else {
-                              handleDelete(item.id!);
+                              if (window.confirm("Are you sure you want to delete this completely?")) {
+                                  handleDelete(item.id!);
+                              }
                           }
                         }}>
                           <Trash2 className="w-3.5 h-3.5" />

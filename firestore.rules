@@ -33,7 +33,6 @@ service cloud.firestore {
     function isValidGroceryList(data) {
       let requiredFields = ['name', 'ownerId', 'members', 'createdAt', 'updatedAt'];
       return data.keys().hasAll(requiredFields)
-        && data.keys().size() == requiredFields.size()
         && data.name is string && data.name.size() > 0 && data.name.size() <= 100
         && data.ownerId is string && data.ownerId.size() > 0 && data.ownerId.size() <= 128
         && data.members is list && data.members.size() > 0 && data.members.size() <= 20
@@ -128,8 +127,7 @@ service cloud.firestore {
           && incoming().get('listId', null) == existing().get('listId', null)
           && incoming().get('creatorId', null) == existing().get('creatorId', null)
           && incoming().get('createdAt', null) == existing().get('createdAt', null)
-          && (!('updatedAt' in incoming()) || incoming().updatedAt == request.time)
-          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'inventoryQuantity', 'inventoryEntries', 'shoppingQuantity', 'shoppingStore', 'unprocessedQuantity', 'isHiddenSuggestion', 'unit', 'locations', 'priceHistory', 'notes', 'updatedAt']);
+          && (!('updatedAt' in incoming()) || incoming().updatedAt == request.time);
 
         allow delete: if isVerified()
           && isValidId(listId)
