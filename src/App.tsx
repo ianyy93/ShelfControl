@@ -828,9 +828,7 @@ export default function App() {
                         </Button>
                         <Button variant="ghost" size="icon" className="h-6 w-6 text-red-400 hover:text-red-700" onClick={(e) => {
                           e.stopPropagation();
-                          if (window.confirm("Are you sure you want to delete this completely?")) {
-                              handleDelete(item.id!);
-                          }
+                          handleDelete(item.id!);
                         }}>
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
@@ -1097,9 +1095,7 @@ export default function App() {
                           if (isShoppingList) {
                               handleUpdateItem(item.id!, { shoppingQuantity: 0 });
                           } else {
-                              if (window.confirm("Are you sure you want to delete this completely?")) {
-                                  handleDelete(item.id!);
-                              }
+                              handleDelete(item.id!);
                           }
                         }}>
                           <Trash2 className="w-3.5 h-3.5" />
