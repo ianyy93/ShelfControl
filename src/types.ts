@@ -67,6 +67,7 @@ export interface GroceryItem {
   inventoryQuantity: number;
   inventoryEntries?: InventoryEntry[];
   shoppingQuantity: number;
+  shoppingStore?: string;
   unprocessedQuantity?: number;
   unit?: string;
   locations?: string[];

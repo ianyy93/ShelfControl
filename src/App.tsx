@@ -8,6 +8,7 @@ import { Button } from "./components/ui/button";
 import { Plus, LogOut, Trash2, Edit, ShoppingCart, Check, Minus, Users, Link as LinkIcon, LineChart, Box, ChevronRight, ChevronDown, EyeOff, X } from "lucide-react";
 import { GroceriesIcon } from "./components/GroceriesIcon";
 import { MoveEntryDialog } from "./components/MoveEntryDialog";
+import { removeUndefined } from "./lib/utils";
 import { ItemDialog } from "./components/ItemDialog";
 import { CheckOffDialog } from "./components/CheckOffDialog";
 import { SearchTab } from "./components/SearchTab";
@@ -44,15 +45,30 @@ export default function App() {
 
   // View Options for All Tabs
   const [isFilterExpanded, setIsFilterExpanded] = useState(false);
-  const [groupBy, setGroupBy] = useState<'category' | 'location'>('location');
+  const [groupBy, setGroupBy] = useState<'category' | 'location' | 'store'>('store');
   const [sortBy, setSortBy] = useState<'name' | 'quantity' | 'expiryDate' | 'dateBought' | 'dateAdded'>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [filterCat, setFilterCat] = useState<string>('All');
   const [filterLoc, setFilterLoc] = useState<string>('All');
   const [filterTag, setFilterTag] = useState<string>('All');
 
+  useEffect(() => {
+     if (activeTab === 'inventory' && groupBy === 'store') setGroupBy('location');
+     if (activeTab === 'shopping' && groupBy === 'location') setGroupBy('store');
+  }, [activeTab]);
+
   const locations = useMemo(() => Array.from(new Set([...PRESET_LOCATIONS, ...items.flatMap(i => i.locations || [i.location]).filter(Boolean) as string[]])), [items]);
   const tags = useMemo(() => Array.from(new Set(items.flatMap(i => i.inventoryEntries?.flatMap(e => e.tags || []) || []))), [items]);
+  const stores = useMemo(() => {
+     const st = new Set<string>();
+     items.forEach(i => {
+         if (i.shoppingStore) st.add(i.shoppingStore);
+         i.priceHistory?.forEach(p => {
+             if (p.store) st.add(p.store);
+         });
+     });
+     return Array.from(st).sort();
+  }, [items]);
 
   useEffect(() => {
     console.log("onAuthStateChanged listener attached");
@@ -191,7 +207,7 @@ export default function App() {
             id: Math.random().toString(36).substr(2, 9)
           }) as unknown as PriceEntry[];
         }
-        await updateDoc(doc(db, "lists", activeListId, "items", editingItem.id), updateData);
+        await updateDoc(doc(db, "lists", activeListId, "items", editingItem.id), removeUndefined(updateData));
       } else {
         const existingMatch = items.find(i => i.name.toLowerCase().trim() === updatedFields.name?.toLowerCase().trim());
         if (existingMatch && existingMatch.id) {
@@ -217,7 +233,7 @@ export default function App() {
              }) as unknown as PriceEntry[];
            }
 
-           await updateDoc(doc(db, "lists", activeListId, "items", existingMatch.id), updateData);
+           await updateDoc(doc(db, "lists", activeListId, "items", existingMatch.id), removeUndefined(updateData));
         } else {
            const newItem: Partial<GroceryItem> = {
              ...updatedFields,
@@ -234,7 +250,7 @@ export default function App() {
              }];
            }
 
-           await addDoc(collection(db, "lists", activeListId, "items"), newItem as GroceryItem);
+           await addDoc(collection(db, "lists", activeListId, "items"), removeUndefined(newItem) as GroceryItem);
         }
       }
       setIsDialogOpen(false);
@@ -309,7 +325,7 @@ export default function App() {
     }
 
     try {
-      await updateDoc(doc(db, "lists", activeListId, "items", item.id), updateData);
+      await updateDoc(doc(db, "lists", activeListId, "items", item.id), removeUndefined(updateData));
     } catch (error) {
       console.error("Error updating quantities:", error);
       handleFirestoreError(error, 'update', `lists/${activeListId}/items/${item.id}`);
@@ -328,7 +344,7 @@ export default function App() {
         updateData.isHiddenSuggestion = false;
       }
 
-      await updateDoc(doc(db, "lists", activeListId, "items", itemId), updateData);
+      await updateDoc(doc(db, "lists", activeListId, "items", itemId), removeUndefined(updateData));
     } catch (error) {
       console.error("Error updating item:", error);
       handleFirestoreError(error, 'update', `lists/${activeListId}/items/${itemId}`);
@@ -356,7 +372,7 @@ export default function App() {
           });
         }
 
-        await updateDoc(doc(db, "lists", activeListId, "items", item.id), updateData);
+        await updateDoc(doc(db, "lists", activeListId, "items", item.id), removeUndefined(updateData));
       }
       setCheckingOffItem(undefined);
     } catch (error) {
@@ -385,7 +401,7 @@ export default function App() {
     if (!user || !activeListId || !item.id) return;
     
     let isModified = false;
-    let newEntries: InventoryEntry[] = [];
+    const newEntries: InventoryEntry[] = [];
     
     for (const e of (item.inventoryEntries || [])) {
         if (e.id === entryId && e.location !== newLocation) {
@@ -395,7 +411,8 @@ export default function App() {
             } else {
                 const remaining = e.quantity - quantityToMove;
                 newEntries.push({ ...e, quantity: remaining });
-                newEntries.push({ ...e, id: "temp-" + Date.now() + Math.random().toString(36).substr(2, 9), quantity: quantityToMove, location: newLocation, isOpened: false, openedDate: undefined });
+                const { openedDate: _, ...restE } = e;
+                newEntries.push({ ...restE, id: "temp-" + Date.now() + Math.random().toString(36).substr(2, 9), quantity: quantityToMove, location: newLocation, isOpened: false });
             }
         } else {
             newEntries.push(e);
@@ -406,11 +423,11 @@ export default function App() {
     
     const newLocs = Array.from(new Set(newEntries.map(e => e.location).filter(Boolean)));
     try {
-      await updateDoc(doc(db, "lists", activeListId, "items", item.id), {
+      await updateDoc(doc(db, "lists", activeListId, "items", item.id), removeUndefined({
         inventoryEntries: newEntries,
         locations: newLocs,
         updatedAt: serverTimestamp()
-      });
+      }));
     } catch (error) {
       console.error("Error moving entry:", error);
       handleFirestoreError(error, 'update', `lists/${activeListId}/items/${item.id}`);
@@ -451,12 +468,12 @@ export default function App() {
     const newLocs = Array.from(new Set(newEntries.map(e => e.location).filter(Boolean)));
 
     try {
-      await updateDoc(doc(db, "lists", activeListId, "items", item.id), {
+      await updateDoc(doc(db, "lists", activeListId, "items", item.id), removeUndefined({
         inventoryQuantity: newInv,
         inventoryEntries: newEntries,
         locations: newLocs,
         updatedAt: serverTimestamp()
-      });
+      }));
     } catch (error) {
       console.error("Error updating entry quantity:", error);
       handleFirestoreError(error, 'update', `lists/${activeListId}/items/${item.id}`);
@@ -466,7 +483,7 @@ export default function App() {
   const toggleEntryStatus = async (item: GroceryItem, entryId: string) => {
     if (!user || !activeListId || !item.id) return;
     
-    let newEntries: InventoryEntry[] = [];
+    const newEntries: InventoryEntry[] = [];
     let isModified = false;
 
     for (const e of (item.inventoryEntries || [])) {
@@ -504,10 +521,10 @@ export default function App() {
     if (!isModified) return;
 
     try {
-      await updateDoc(doc(db, "lists", activeListId, "items", item.id), {
+      await updateDoc(doc(db, "lists", activeListId, "items", item.id), removeUndefined({
         inventoryEntries: newEntries,
         updatedAt: serverTimestamp()
-      });
+      }));
     } catch (error) {
       console.error("Error toggling status:", error);
       handleFirestoreError(error, 'update', `lists/${activeListId}/items/${item.id}`);
@@ -524,10 +541,10 @@ export default function App() {
     });
 
     try {
-      await updateDoc(doc(db, "lists", activeListId, "items", item.id), {
+      await updateDoc(doc(db, "lists", activeListId, "items", item.id), removeUndefined({
         inventoryEntries: newEntries,
         updatedAt: serverTimestamp()
-      });
+      }));
     } catch (error) {
       console.error("Error updating opened date:", error);
       handleFirestoreError(error, 'update', `lists/${activeListId}/items/${item.id}`);
@@ -585,7 +602,11 @@ export default function App() {
             {isFilterExpanded ? "Hide Filters" : "Show Filters"}
           </Button>
           <div className="flex items-center bg-gray-100 rounded-lg p-1 ml-2">
-             <button onClick={() => setGroupBy('location')} className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${groupBy === 'location' ? 'bg-white shadow-sm text-gray-900 border border-gray-200/50' : 'text-gray-500 hover:text-gray-700'}`}>Location</button>
+             {activeTab === 'shopping' ? (
+                <button onClick={() => setGroupBy('store')} className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${groupBy === 'store' ? 'bg-white shadow-sm text-gray-900 border border-gray-200/50' : 'text-gray-500 hover:text-gray-700'}`}>Store</button>
+             ) : (
+                <button onClick={() => setGroupBy('location')} className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${groupBy === 'location' ? 'bg-white shadow-sm text-gray-900 border border-gray-200/50' : 'text-gray-500 hover:text-gray-700'}`}>Location</button>
+             )}
              <button onClick={() => setGroupBy('category')} className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${groupBy === 'category' ? 'bg-white shadow-sm text-gray-900 border border-gray-200/50' : 'text-gray-500 hover:text-gray-700'}`}>Category</button>
           </div>
           <div className="text-sm text-gray-500 hidden sm:block ml-2">
@@ -761,7 +782,7 @@ export default function App() {
     }
 
     return (
-      <Accordion type="single" collapsible className="space-y-4 mt-4 sm:mt-6 w-full">
+      <Accordion className="space-y-4 mt-4 sm:mt-6 w-full">
         {groups.map(group => (
           <AccordionItem key={group.name} value={group.name} className="border border-gray-200 bg-white rounded-xl shadow-sm overflow-hidden data-[state=open]:pb-4">
             <AccordionTrigger className="hover:no-underline px-4 py-4 font-semibold text-lg text-gray-800 transition-colors hover:bg-gray-50/50">
@@ -978,6 +999,14 @@ export default function App() {
         return acc;
       }, {} as Record<string, GroceryItem[]>);
       groups = CATEGORIES.filter(c => g[c]?.length > 0).map(c => ({ name: c, items: g[c] }));
+    } else if (groupBy === 'store') {
+      const g = filteredItems.reduce((acc, item) => {
+        const store = item.shoppingStore || 'Unassigned';
+        if (!acc[store]) acc[store] = [];
+        acc[store].push(item);
+        return acc;
+      }, {} as Record<string, GroceryItem[]>);
+      groups = Object.keys(g).sort().map(k => ({ name: k, items: g[k] }));
     } else {
       const g: Record<string, GroceryItem[]> = {};
       filteredItems.forEach(item => {
@@ -998,12 +1027,17 @@ export default function App() {
     }
 
     return (
-      <div className="space-y-6 sm:space-y-8">
+      <Accordion type="multiple" className="space-y-4 w-full">
         {groups.map(group => (
-          <div key={group.name} className="space-y-4">
-            <h3 className="font-semibold text-lg text-gray-800 border-b pb-2">{group.name}</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-              {group.items.map(item => {
+          <AccordionItem key={group.name} value={group.name} className="border border-gray-200 bg-white rounded-xl shadow-sm overflow-hidden data-[state=open]:pb-4">
+            <AccordionTrigger className="hover:no-underline px-4 py-4 font-semibold text-lg text-gray-800 transition-colors hover:bg-gray-50/50">
+              <div className="flex items-center gap-2">
+                 {group.name} <Badge variant="secondary" className="ml-2 bg-gray-100 text-gray-600 border-none font-medium">{group.items.length}</Badge>
+              </div>
+            </AccordionTrigger>
+            <AccordionContent className="px-4 pt-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+                {group.items.map(item => {
                 let priceInsights = null;
                 if (isShoppingList && item.priceHistory && item.priceHistory.length > 0) {
                   const sortedPrices = [...item.priceHistory].sort((a, b) => b.date.localeCompare(a.date));
@@ -1243,9 +1277,10 @@ export default function App() {
               );
               })}
             </div>
-          </div>
+            </AccordionContent>
+          </AccordionItem>
         ))}
-      </div>
+      </Accordion>
     );
   };
 
@@ -1443,6 +1478,9 @@ export default function App() {
         <option value="mL" />
         <option value="L" />
         <option value="lb" />
+      </datalist>
+      <datalist id="stores-list">
+        {stores.map(s => <option key={s} value={s} />)}
       </datalist>
     </div>
   );

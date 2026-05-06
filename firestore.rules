@@ -43,7 +43,7 @@ service cloud.firestore {
     }
 
     function isValidGroceryItem(data) {
-      let requiredFields = ['name', 'category', 'inventoryQuantity', 'shoppingQuantity', 'listId', 'creatorId', 'createdAt', 'updatedAt'];
+      let requiredFields = ['name', 'category', 'inventoryQuantity', 'shoppingQuantity'];
       return data.keys().hasAll(requiredFields) 
         && data.name is string && data.name.size() > 0 && data.name.size() <= 200
         && data.category is string && data.category.size() > 0 && data.category.size() <= 100
@@ -52,14 +52,15 @@ service cloud.firestore {
         && data.shoppingQuantity is number
         && (!('unprocessedQuantity' in data) || data.unprocessedQuantity is number)
         && (!('isHiddenSuggestion' in data) || data.isHiddenSuggestion is bool)
+        && (!('shoppingStore' in data) || (data.shoppingStore is string && data.shoppingStore.size() <= 100))
         && (!('unit' in data) || (data.unit is string && data.unit.size() <= 50))
         && (!('locations' in data) || (data.locations is list && data.locations.size() <= 10 && (data.locations.size() == 0 || data.locations[0] is string)))
         && (!('priceHistory' in data) || data.priceHistory is list)
         && (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000))
-        && data.listId is string && data.listId.size() > 0 && data.listId.size() <= 128
-        && data.creatorId is string && data.creatorId.size() > 0 && data.creatorId.size() <= 128
-        && data.createdAt is timestamp
-        && data.updatedAt is timestamp;
+        && (!('listId' in data) || (data.listId is string && data.listId.size() > 0 && data.listId.size() <= 128))
+        && (!('creatorId' in data) || (data.creatorId is string && data.creatorId.size() > 0 && data.creatorId.size() <= 128))
+        && (!('createdAt' in data) || data.createdAt is timestamp)
+        && (!('updatedAt' in data) || data.updatedAt is timestamp);
     }
 
     // 1. The Master Gate (Relational Sync)
@@ -124,11 +125,11 @@ service cloud.firestore {
           && isValidId(itemId)
           && isListMember()
           && isValidGroceryItem(incoming())
-          && incoming().listId == existing().listId
-          && incoming().creatorId == existing().creatorId
-          && incoming().createdAt == existing().createdAt
-          && incoming().updatedAt == request.time
-          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'inventoryQuantity', 'inventoryEntries', 'shoppingQuantity', 'unprocessedQuantity', 'isHiddenSuggestion', 'unit', 'locations', 'priceHistory', 'notes', 'updatedAt']);
+          && incoming().get('listId', null) == existing().get('listId', null)
+          && incoming().get('creatorId', null) == existing().get('creatorId', null)
+          && incoming().get('createdAt', null) == existing().get('createdAt', null)
+          && (!('updatedAt' in incoming()) || incoming().updatedAt == request.time)
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'inventoryQuantity', 'inventoryEntries', 'shoppingQuantity', 'shoppingStore', 'unprocessedQuantity', 'isHiddenSuggestion', 'unit', 'locations', 'priceHistory', 'notes', 'updatedAt']);
 
         allow delete: if isVerified()
           && isValidId(listId)

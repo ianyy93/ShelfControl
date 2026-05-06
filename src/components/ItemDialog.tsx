@@ -139,6 +139,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
   
   // Internal state for edits
   const [shoppingQuantity, setShoppingQuantity] = useState<string | number>(0);
+  const [shoppingStore, setShoppingStore] = useState("");
   const [inventoryEntries, setInventoryEntries] = useState<InventoryEntry[]>([]);
 
   const [loading, setLoading] = useState(false);
@@ -180,6 +181,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
         setUnit(item.unit || "");
         setNotes(item.notes || "");
         setShoppingQuantity(item.shoppingQuantity || 0);
+        setShoppingStore(item.shoppingStore || "");
         setInventoryEntries(item.inventoryEntries || []);
         
         if (item.unprocessedQuantity && item.unprocessedQuantity > 0) {
@@ -200,6 +202,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
         setUnit("");
         setNotes("");
         setShoppingQuantity(0);
+        setShoppingStore("");
         setInventoryEntries([]);
         if (defaultMode === 'shopping') {
             setShoppingQuantity(1);
@@ -244,7 +247,8 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
       notes,
       inventoryEntries,
       inventoryQuantity: derivedInventoryQuant,
-      shoppingQuantity: Number(shoppingQuantity) || 0
+      shoppingQuantity: Number(shoppingQuantity) || 0,
+      shoppingStore
     };
 
     if (item && item.unprocessedQuantity && item.unprocessedQuantity > 0) {
@@ -288,11 +292,11 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
     const prevEntry = inventoryEntries.length > 0 ? inventoryEntries[inventoryEntries.length - 1] : null;
 
     if (prevEntry) {
+        const { openedDate: _, ...restPrev } = prevEntry;
         setInventoryEntries([...inventoryEntries, {
-            ...prevEntry,
+            ...restPrev,
             id: Math.random().toString(36).substr(2, 9),
-            isOpened: false,
-            openedDate: undefined
+            isOpened: false
         }]);
     } else {
         setInventoryEntries([...inventoryEntries, { 
@@ -311,7 +315,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
   };
 
   const updateInventoryEntry = (id: string, field: keyof InventoryEntry, value: string | number | string[] | boolean) => {
-    let newEntries: InventoryEntry[] = [];
+    const newEntries: InventoryEntry[] = [];
     for (const e of inventoryEntries) {
         if (e.id === id) {
              if (field === 'isOpened' && value === true && e.quantity > 1) {
@@ -339,7 +343,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
         e.id === entry.id
           ? [ 
               { ...e, quantity: remainingQuantity }, 
-              { ...e, id: newEntryId, quantity: newQuantity, isOpened: false, openedDate: undefined } 
+              ((entryObj) => { const { openedDate: _, ...rest } = entryObj; return { ...rest, id: newEntryId, quantity: newQuantity, isOpened: false }; })(e)
             ]
           : e
       )
@@ -498,10 +502,22 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                 </div>
               )}
               {mode === 'shopping' && (
-                <div className="space-y-2">
-                  <Label htmlFor="unit" className="text-xs font-semibold text-gray-500 uppercase tracking-tight">Unit</Label>
-                  <UnitSelect value={unit} onChange={handleUnitChange} className={selectStyles} />
-                </div>
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="unit" className="text-xs font-semibold text-gray-500 uppercase tracking-tight">Unit</Label>
+                    <UnitSelect value={unit} onChange={handleUnitChange} className={selectStyles} />
+                  </div>
+                  <div className="space-y-2 col-span-1 sm:col-span-3">
+                    <Label className="text-xs font-semibold text-gray-500 uppercase tracking-tight">Store / Merchant</Label>
+                    <Input 
+                      value={shoppingStore} 
+                      onChange={e => setShoppingStore(e.target.value)} 
+                      placeholder="e.g. Costco, Walmart" 
+                      className={selectStyles}
+                      list="stores-list"
+                    />
+                  </div>
+                </>
               )}
           </div>
 
@@ -669,6 +685,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                     placeholder="e.g. Costco, Walmart" 
                     className="h-8 text-sm bg-white" 
                     required={mode === 'prices'}
+                    list="stores-list"
                   />
                 </div>
                 <div className="flex items-center space-x-2 col-span-2">

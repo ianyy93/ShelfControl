@@ -143,7 +143,7 @@ export function SearchTab({ items, onUpdateItem }: SearchTabProps) {
 
     if (timeRange !== "All" && dataPoints.length > 0) {
        const now = new Date();
-       let cutoff = new Date();
+       const cutoff = new Date();
        if (timeRange === "P12M") cutoff.setMonth(now.getMonth() - 12);
        if (timeRange === "P3M") cutoff.setMonth(now.getMonth() - 3);
        const cutoffTs = cutoff.getTime();
@@ -235,15 +235,20 @@ export function SearchTab({ items, onUpdateItem }: SearchTabProps) {
 
   const handleUpdateEntry = async (entry: PriceEntry & { itemId: string }) => {
      if (!selectedItem) return;
-     const newHistory = (selectedItem.priceHistory || []).map(ph => 
-        ph.id === entry.id ? {
-            ...editForm!,
-            price: Number(editForm!.price),
-            dealPrice: editForm!.dealPrice ? Number(editForm!.dealPrice) : undefined,
-            dealQuantity: editForm!.dealQuantity ? Number(editForm!.dealQuantity) : undefined,
-            quantity: Number(editForm!.quantity),
-        } : ph
-     );
+     const newHistory = (selectedItem.priceHistory || []).map(ph => {
+        if (ph.id === entry.id) {
+           const { dealPrice: _1, dealQuantity: _2, ...restform } = editForm!;
+           const updated = {
+               ...restform,
+               price: Number(editForm!.price),
+               quantity: Number(editForm!.quantity),
+               ...(editForm!.dealPrice ? { dealPrice: Number(editForm!.dealPrice) } : {}),
+               ...(editForm!.dealQuantity ? { dealQuantity: Number(editForm!.dealQuantity) } : {})
+           };
+           return updated;
+        }
+        return ph;
+     });
      await onUpdateItem(selectedItem.id!, { priceHistory: newHistory });
      setEditingEntryId(null);
      setEditForm(null);
@@ -457,7 +462,7 @@ export function SearchTab({ items, onUpdateItem }: SearchTabProps) {
                         {editingEntryId === entry.id ? (
                             <div className="flex-1 flex flex-col sm:flex-row items-start sm:items-center gap-2">
                               <Input type="date" value={editForm?.date || ''} onChange={e => setEditForm({...editForm!, date: e.target.value})} className="h-8 max-w-[140px]" />
-                              <Input placeholder="Store" value={editForm?.store || ''} onChange={e => setEditForm({...editForm!, store: e.target.value})} className="h-8 max-w-[140px]" />
+                              <Input placeholder="Store" value={editForm?.store || ''} onChange={e => setEditForm({...editForm!, store: e.target.value})} className="h-8 max-w-[140px]" list="stores-list" />
                               <Input type="number" step="0.01" placeholder="Price $" value={editForm?.price || ''} onChange={e => setEditForm({...editForm!, price: parseFloat(e.target.value)})} className="h-8 max-w-[90px]" />
                               <Input type="number" step="0.01" placeholder="Deal $ (opt)" value={editForm?.dealPrice || ''} onChange={e => setEditForm({...editForm!, dealPrice: parseFloat(e.target.value), isDiscount: true })} className="h-8 max-w-[90px]" />
                               <div className="flex items-center gap-1">

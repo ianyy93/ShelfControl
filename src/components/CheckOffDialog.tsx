@@ -46,7 +46,7 @@ export function CheckOffDialog({ open, onOpenChange, item, onConfirm }: CheckOff
       setTrackPrice(true);
       setPrice("");
       setPriceUnit(item.unit || "");
-      setStore("");
+      setStore(item.shoppingStore || "");
       setIsDiscount(false);
       setDealPrice("");
       setDealQuantity("");
@@ -66,7 +66,7 @@ export function CheckOffDialog({ open, onOpenChange, item, onConfirm }: CheckOff
     
     if (trackPrice) {
       let finalPrice = Number(price);
-      let finalUnit = priceUnit || item.unit || "unit";
+      const finalUnit = priceUnit || item.unit || "unit";
       let finalQuantity = 1;
       
       if (isDiscount) {
@@ -132,9 +132,6 @@ export function CheckOffDialog({ open, onOpenChange, item, onConfirm }: CheckOff
                   required={trackPrice}
                   list="stores-list"
                 />
-                <datalist id="stores-list">
-                  {STORES.map(s => <option key={s} value={s} />)}
-                </datalist>
               </div>
 
               <div className="space-y-1.5 col-span-2 mt-1">
