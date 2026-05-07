@@ -291,16 +291,18 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
     const today = new Date().toISOString().split('T')[0];
     const prevEntry = inventoryEntries.length > 0 ? inventoryEntries[inventoryEntries.length - 1] : null;
 
+    const newId = Math.random().toString(36).substr(2, 9);
+
     if (prevEntry) {
         const { openedDate: _, ...restPrev } = prevEntry;
         setInventoryEntries([...inventoryEntries, {
             ...restPrev,
-            id: Math.random().toString(36).substr(2, 9),
+            id: newId,
             isOpened: false
         }]);
     } else {
         setInventoryEntries([...inventoryEntries, { 
-          id: Math.random().toString(36).substr(2, 9), 
+          id: newId, 
           location: "", 
           quantity: 1, 
           unit: unit || item?.unit || "",
@@ -308,6 +310,11 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
           dateAdded: today
         }]);
     }
+
+    setTimeout(() => {
+        const el = document.getElementById(`entry-${newId}`);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 100);
   };
 
   const removeInventoryEntry = (id: string) => {
@@ -540,7 +547,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                </div>
                
                {inventoryEntries.map((entry, index) => (
-                 <div key={entry.id} className="p-3 bg-gray-50 border rounded-lg space-y-3 relative group">
+                 <div key={entry.id} id={`entry-${entry.id}`} className="p-3 bg-gray-50 border rounded-lg space-y-3 relative group">
                    <div className="flex justify-between items-center gap-2">
                      <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Entry #{index + 1}</span>
                      <div className="flex gap-1">

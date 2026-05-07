@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "motion/react";
-import { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo, useRef } from "react";
 import { auth, db, signIn, signOut, handleFirestoreError } from "./lib/firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { collection, onSnapshot, query, addDoc, serverTimestamp, doc, deleteDoc, updateDoc, where, getDoc, arrayUnion } from "firebase/firestore";
@@ -51,6 +51,7 @@ export default function App() {
   const [filterCat, setFilterCat] = useState<string>('All');
   const [filterLoc, setFilterLoc] = useState<string>('All');
   const [filterTag, setFilterTag] = useState<string>('All');
+  const [filterExpiry, setFilterExpiry] = useState<string>('All');
 
   useEffect(() => {
      if (activeTab === 'inventory' && groupBy === 'store') setGroupBy('location');
@@ -271,7 +272,7 @@ export default function App() {
     }
   };
 
-  const updateQuantities = async (item: GroceryItem, invDelta: number, shopDelta: number) => {
+  const updateQuantities = async (item: GroceryItem, invDelta: number, shopDelta: number, locationTrigger?: string) => {
     if (!user || !activeListId || !item.id) return;
     const newInv = Math.max(0, item.inventoryQuantity + invDelta);
     const newShop = Math.max(0, item.shoppingQuantity + shopDelta);
@@ -279,8 +280,9 @@ export default function App() {
     let newEntries = [...(item.inventoryEntries || [])];
 
     if (invDelta > 0) {
-      const defaultLoc = item.location || item.locations?.[0] || 'Unassigned';
-      const entry = newEntries.find(e => !e.label && !e.expiryDate && e.location === defaultLoc);
+      let defaultLoc = locationTrigger || item.location || item.locations?.[0] || 'Unassigned';
+      if (defaultLoc === 'Unassigned') defaultLoc = '';
+      const entry = newEntries.find(e => !e.label && !e.expiryDate && (e.location || '') === defaultLoc);
       const today = new Date().toISOString().split('T')[0];
       if (entry) {
         entry.quantity += invDelta;
@@ -297,15 +299,34 @@ export default function App() {
       }
     } else if (invDelta < 0) {
       let remaining = Math.abs(invDelta);
-      for (let i = 0; i < newEntries.length; i++) {
-        if (newEntries[i].quantity > remaining) {
-          newEntries[i].quantity -= remaining;
-          remaining = 0;
-          break;
-        } else {
-          remaining -= newEntries[i].quantity;
-          newEntries[i].quantity = 0;
-        }
+      
+      if (locationTrigger) {
+         const trigLoc = locationTrigger === 'Unassigned' ? '' : locationTrigger;
+         for (let i = 0; i < newEntries.length; i++) {
+           if ((newEntries[i].location || '') === trigLoc) {
+             if (newEntries[i].quantity > remaining) {
+               newEntries[i].quantity -= remaining;
+               remaining = 0;
+               break;
+             } else {
+               remaining -= newEntries[i].quantity;
+               newEntries[i].quantity = 0;
+             }
+           }
+         }
+      }
+
+      if (remaining > 0) {
+          for (let i = 0; i < newEntries.length; i++) {
+            if (newEntries[i].quantity > remaining) {
+              newEntries[i].quantity -= remaining;
+              remaining = 0;
+              break;
+            } else {
+              remaining -= newEntries[i].quantity;
+              newEntries[i].quantity = 0;
+            }
+          }
       }
       newEntries = newEntries.filter(e => e.quantity > 0);
     }
@@ -628,7 +649,7 @@ export default function App() {
             transition={{ duration: 0.3, ease: "easeInOut" }}
             className="overflow-hidden"
           >
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-3 sm:gap-4 bg-white p-3 sm:p-4 rounded-xl border border-gray-200 shadow-sm text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 bg-white p-3 sm:p-4 rounded-xl border border-gray-200 shadow-sm text-sm">
                <div className="flex flex-col gap-1.5">
                  <label className="font-semibold text-gray-700 text-xs uppercase tracking-wider">Sort by</label>
                  <div className="flex gap-2">
@@ -677,6 +698,16 @@ export default function App() {
                  </select>
                </div>
 
+               <div className="flex flex-col gap-1.5">
+                 <label className="font-semibold text-gray-700 text-xs uppercase tracking-wider">Expiry</label>
+                 <select value={filterExpiry} onChange={e => setFilterExpiry(e.target.value)} className="bg-gray-50 border rounded-md p-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                   <option value="All">Any Expiry</option>
+                   <option value="Expired">Expired</option>
+                   <option value="1 Week">1 Week</option>
+                   <option value="1 Month">1 Month</option>
+                 </select>
+               </div>
+
                <div className="flex items-end">
                   <Button variant="ghost" size="sm" onClick={() => {
                     setFilterCat('All');
@@ -707,6 +738,24 @@ export default function App() {
       
       const itemTags = item.inventoryEntries?.flatMap(e => e.tags || []) || [];
       if (filterTag !== 'All' && !itemTags.includes(filterTag)) return false;
+
+      if (filterExpiry !== 'All') {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const oneWeekObj = new Date(); oneWeekObj.setDate(oneWeekObj.getDate() + 7);
+        const oneWeekStr = oneWeekObj.toISOString().split('T')[0];
+        const oneMonthObj = new Date(); oneMonthObj.setMonth(oneMonthObj.getMonth() + 1);
+        const oneMonthStr = oneMonthObj.toISOString().split('T')[0];
+        
+        const hasMatchingExpiry = item.inventoryEntries?.some(e => {
+           if (!e.expiryDate) return false;
+           if (filterExpiry === 'Expired') return e.expiryDate < todayStr;
+           if (filterExpiry === '1 Week') return e.expiryDate >= todayStr && e.expiryDate <= oneWeekStr;
+           if (filterExpiry === '1 Month') return e.expiryDate >= todayStr && e.expiryDate <= oneMonthStr;
+           return false;
+        });
+
+        if (!hasMatchingExpiry) return false;
+      }
 
       return true;
     });
@@ -785,14 +834,31 @@ export default function App() {
       <Accordion className="space-y-4 mt-4 sm:mt-6 w-full">
         {groups.map(group => (
           <AccordionItem key={group.name} value={group.name} className="border border-gray-200 bg-white rounded-xl shadow-sm overflow-hidden data-[state=open]:pb-4">
-            <AccordionTrigger className="hover:no-underline px-4 py-4 font-semibold text-lg text-gray-800 transition-colors hover:bg-gray-50/50">
+            <AccordionTrigger 
+              className="hover:no-underline px-4 py-4 font-semibold text-lg text-gray-800 transition-colors hover:bg-gray-50/50"
+              onTouchStart={() => startLongPress(group.name)}
+              onTouchEnd={cancelLongPress}
+              onTouchMove={cancelLongPress}
+              onContextMenu={(e) => handleContextMenu(e, group.name)}
+            >
               <div className="flex items-center gap-2">
                  {group.name} <Badge variant="secondary" className="ml-2 bg-gray-100 text-gray-600 border-none font-medium">{group.items.length}</Badge>
               </div>
             </AccordionTrigger>
             <AccordionContent className="px-4 pt-2">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-                {group.items.map(item => (
+                {group.items.map(item => {
+                let displayInventoryQuantity = item.inventoryQuantity;
+                if (groupBy === 'location') {
+                    displayInventoryQuantity = (item.inventoryEntries || [])
+                        .filter(e => (e.location || 'Unassigned') === group.name || (!e.location && group.name === 'Unassigned'))
+                        .reduce((sum, e) => sum + e.quantity, 0);
+                    // Special case if there are no entries at all
+                    if (!item.inventoryEntries || item.inventoryEntries.length === 0) {
+                        displayInventoryQuantity = item.inventoryQuantity;
+                    }
+                }
+                return (
                 <div key={`${group.name}-${item.id}`} onClick={() => toggleExpanded(item.id!)} className="bg-white p-3 sm:p-4 rounded-xl shadow-sm ring-1 ring-gray-900/5 flex flex-col gap-2 sm:gap-3 cursor-pointer hover:shadow-md transition-shadow">
                   <div className="flex justify-between items-start gap-2">
                     <div className="flex-1 min-w-0">
@@ -819,7 +885,7 @@ export default function App() {
                     </div>
                     <div className="flex flex-col items-end gap-1 shrink-0">
                       <div className="flex items-center gap-1">
-                        <span className="text-lg font-bold text-gray-900">{item.inventoryQuantity} <span className="text-xs text-gray-500 font-normal">count</span></span>
+                        <span className="text-lg font-bold text-gray-900">{displayInventoryQuantity} <span className="text-xs text-gray-500 font-normal">count</span></span>
                       </div>
                       {item.shoppingQuantity > 0 && <span className="text-xs text-blue-600 font-medium">+{item.shoppingQuantity} {item.unit || ""} to buy</span>}
                       <div className="flex gap-1 mt-1" onClick={e => e.stopPropagation()}>
@@ -838,7 +904,9 @@ export default function App() {
                   
                   {expandedItems[item.id!] && item.inventoryEntries && item.inventoryEntries.length > 0 && (
                     <div className="bg-gray-50/50 rounded-lg text-xs mt-3 border border-gray-100 divide-y divide-gray-100" onClick={e => e.stopPropagation()}>
-                       {item.inventoryEntries.map(entry => (
+                       {item.inventoryEntries
+                          .filter(entry => groupBy !== 'location' || (entry.location || 'Unassigned') === group.name || (!entry.location && group.name === 'Unassigned'))
+                          .map(entry => (
                          <div key={entry.id} className="p-2 flex justify-between items-center hover:bg-gray-50 transition-colors">
                            <div className="flex flex-col gap-0.5">
                              <div className="flex items-center gap-1.5 pl-1.5 border-l-2 border-gray-300">
@@ -913,13 +981,87 @@ export default function App() {
 
                   {expandedItems[item.id!] && item.notes && <div className="text-xs text-gray-500 mt-1 line-clamp-2 italic border-t pt-2" title={item.notes}>{item.notes}</div>}
                 </div>
-              ))}
+              );
+              })}
             </div>
           </AccordionContent>
         </AccordionItem>
       ))}
     </Accordion>
     );
+  };
+
+  const longPressTimer = React.useRef<NodeJS.Timeout | null>(null);
+
+  const startLongPress = (groupName: string) => {
+    if (groupBy !== 'location' || groupName === 'Unassigned') return;
+    longPressTimer.current = setTimeout(() => {
+       const newName = window.prompt("Rename location to:", groupName);
+       if (newName && newName.trim() !== "" && newName !== groupName) {
+         handleRenameLocation(groupName, newName.trim());
+       }
+    }, 600);
+  };
+
+  const cancelLongPress = () => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+  };
+
+  const handleContextMenu = (e: React.MouseEvent, groupName: string) => {
+    if (groupBy !== 'location' || groupName === 'Unassigned') return;
+    e.preventDefault();
+    cancelLongPress();
+    const newName = window.prompt("Rename location to:", groupName);
+    if (newName && newName.trim() !== "" && newName !== groupName) {
+      handleRenameLocation(groupName, newName.trim());
+    }
+  };
+
+  const handleRenameLocation = async (oldName: string, newName: string) => {
+    if (!user || !activeListId) return;
+
+    try {
+      const updates = items.map(async item => {
+        let changed = false;
+        let newLocations = item.locations || [];
+        let newLocation = item.location;
+        let newEntries = [...(item.inventoryEntries || [])];
+
+        if (newLocation === oldName) {
+           newLocation = newName;
+           changed = true;
+        }
+
+        if (newLocations.includes(oldName)) {
+           newLocations = newLocations.map(l => l === oldName ? newName : l);
+           changed = true;
+        }
+
+        let entriesChanged = false;
+        newEntries = newEntries.map(e => {
+           if (e.location === oldName) {
+              entriesChanged = true;
+              return { ...e, location: newName };
+           }
+           return e;
+        });
+
+        if (entriesChanged) changed = true;
+
+        if (changed) {
+           newLocations = Array.from(new Set(newLocations));
+           await updateDoc(doc(db, "lists", activeListId, "items", item.id!), {
+              location: newLocation,
+              locations: newLocations,
+              inventoryEntries: newEntries
+           });
+        }
+      });
+      await Promise.all(updates);
+    } catch (e) {
+       console.error(e);
+       alert("Failed to rename location.");
+    }
   };
 
   const renderGroupedItems = (itemList: GroceryItem[], isShoppingList: boolean, isSuggested = false) => {
@@ -933,6 +1075,24 @@ export default function App() {
       
       const itemTags = item.inventoryEntries?.flatMap(e => e.tags || []) || [];
       if (filterTag !== 'All' && !itemTags.includes(filterTag)) return false;
+
+      if (!isShoppingList && filterExpiry !== 'All') {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const oneWeekObj = new Date(); oneWeekObj.setDate(oneWeekObj.getDate() + 7);
+        const oneWeekStr = oneWeekObj.toISOString().split('T')[0];
+        const oneMonthObj = new Date(); oneMonthObj.setMonth(oneMonthObj.getMonth() + 1);
+        const oneMonthStr = oneMonthObj.toISOString().split('T')[0];
+        
+        const hasMatchingExpiry = item.inventoryEntries?.some(e => {
+           if (!e.expiryDate) return false;
+           if (filterExpiry === 'Expired') return e.expiryDate < todayStr;
+           if (filterExpiry === '1 Week') return e.expiryDate >= todayStr && e.expiryDate <= oneWeekStr;
+           if (filterExpiry === '1 Month') return e.expiryDate >= todayStr && e.expiryDate <= oneMonthStr;
+           return false;
+        });
+
+        if (!hasMatchingExpiry) return false;
+      }
 
       return true;
     });
@@ -1021,7 +1181,13 @@ export default function App() {
       <Accordion type="multiple" className="space-y-4 w-full">
         {groups.map(group => (
           <AccordionItem key={group.name} value={group.name} className="border border-gray-200 bg-white rounded-xl shadow-sm overflow-hidden data-[state=open]:pb-4">
-            <AccordionTrigger className="hover:no-underline px-4 py-4 font-semibold text-lg text-gray-800 transition-colors hover:bg-gray-50/50">
+            <AccordionTrigger 
+              className="hover:no-underline px-4 py-4 font-semibold text-lg text-gray-800 transition-colors hover:bg-gray-50/50"
+              onTouchStart={() => startLongPress(group.name)}
+              onTouchEnd={cancelLongPress}
+              onTouchMove={cancelLongPress}
+              onContextMenu={(e) => handleContextMenu(e, group.name)}
+            >
               <div className="flex items-center gap-2">
                  {group.name} <Badge variant="secondary" className="ml-2 bg-gray-100 text-gray-600 border-none font-medium">{group.items.length}</Badge>
               </div>
@@ -1029,6 +1195,17 @@ export default function App() {
             <AccordionContent className="px-4 pt-2">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                 {group.items.map(item => {
+                let displayInventoryQuantity = item.inventoryQuantity;
+                if (!isShoppingList && groupBy === 'location') {
+                    displayInventoryQuantity = (item.inventoryEntries || [])
+                        .filter(e => (e.location || 'Unassigned') === group.name || (!e.location && group.name === 'Unassigned'))
+                        .reduce((sum, e) => sum + e.quantity, 0);
+                    // Special case if there are no entries at all
+                    if (!item.inventoryEntries || item.inventoryEntries.length === 0) {
+                        displayInventoryQuantity = item.inventoryQuantity;
+                    }
+                }
+                
                 let priceInsights = null;
                 if (isShoppingList && item.priceHistory && item.priceHistory.length > 0) {
                   const sortedPrices = [...item.priceHistory].sort((a, b) => b.date.localeCompare(a.date));
@@ -1139,7 +1316,9 @@ export default function App() {
 
                   {!isShoppingList && !isSuggested && expandedItems[item.id!] && (item.inventoryEntries || []).length > 0 && (
                     <div className="mt-1 space-y-2 pt-2 border-t border-gray-100">
-                       {(item.inventoryEntries || []).map(entry => (
+                       {(item.inventoryEntries || [])
+                          .filter(entry => groupBy !== 'location' || (entry.location || 'Unassigned') === group.name || (!entry.location && group.name === 'Unassigned'))
+                          .map(entry => (
                          <div key={entry.id} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg border border-gray-100 group">
                            <div className="min-w-0 flex-1">
                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -1240,11 +1419,11 @@ export default function App() {
                     ) : (
                       <>
                         <div className="flex items-center gap-2" onClick={(e) => { if (!expandedItems[item.id!]) { e.stopPropagation(); toggleExpanded(item.id!); } }}>
-                          <Button variant="outline" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); updateQuantities(item, -1, 0); }}>
+                          <Button variant="outline" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); updateQuantities(item, -1, 0, groupBy === 'location' ? group.name : undefined); }}>
                             <Minus className="w-3 h-3" />
                           </Button>
-                          <span className="text-sm font-medium w-6 text-center cursor-pointer">{item.inventoryQuantity} <span className="text-xs text-gray-500 font-normal">{item.unit}</span></span>
-                          <Button variant="outline" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); updateQuantities(item, 1, 0); }}>
+                          <span className="text-sm font-medium w-6 text-center cursor-pointer">{displayInventoryQuantity} <span className="text-xs text-gray-500 font-normal">{item.unit}</span></span>
+                          <Button variant="outline" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); updateQuantities(item, 1, 0, groupBy === 'location' ? group.name : undefined); }}>
                             <Plus className="w-3 h-3" />
                           </Button>
                         </div>
