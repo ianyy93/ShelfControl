@@ -5,16 +5,17 @@ import { onAuthStateChanged, User } from "firebase/auth";
 import { collection, onSnapshot, query, addDoc, serverTimestamp, doc, deleteDoc, updateDoc, where, getDoc, arrayUnion } from "firebase/firestore";
 import { GroceryItem, GroceryList, CATEGORIES, InventoryEntry, PRESET_LOCATIONS, PriceEntry } from "./types";
 import { Button } from "./components/ui/button";
-import { Plus, LogOut, Trash2, Edit, ShoppingCart, Check, Minus, Users, Link as LinkIcon, LineChart, Box, ChevronRight, ChevronDown, EyeOff, X } from "lucide-react";
+import { Input } from "./components/ui/input";
+import { Plus, LogOut, Trash2, Edit, ShoppingCart, Check, Minus, Users, Link as LinkIcon, LineChart, Box, ChevronRight, ChevronDown, EyeOff, X, Search } from "lucide-react";
 import { GroceriesIcon } from "./components/GroceriesIcon";
 import { MoveEntryDialog } from "./components/MoveEntryDialog";
 import { removeUndefined } from "./lib/utils";
 import { ItemDialog } from "./components/ItemDialog";
 import { CheckOffDialog } from "./components/CheckOffDialog";
-import { SearchTab } from "./components/SearchTab";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Badge } from "./components/ui/badge";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "./components/ui/accordion";
+import { LineChart as RechartsLineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -27,15 +28,11 @@ export default function App() {
   
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<GroceryItem | undefined>();
+  const [focusedEntryId, setFocusedEntryId] = useState<string | null>(null);
   const [checkingOffItem, setCheckingOffItem] = useState<GroceryItem | undefined>();
 
   const [activeTab, setActiveTab] = useState<'shopping' | 'inventory' | 'search'>('shopping');
-  const [priceAnalysisItemId, setPriceAnalysisItemId] = useState<string | null>(null);
-
-  const handleGoToPriceAnalysis = (itemId: string) => {
-    setPriceAnalysisItemId(itemId);
-    setActiveTab('prices');
-  };
+  const [searchQuery, setSearchQuery] = useState("");
 
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
 
@@ -727,8 +724,17 @@ export default function App() {
     </div>
   );
 
-  const renderInventoryItems = () => {
-    const filteredItems = inventoryItems.filter(item => {
+  const renderInventoryItems = (searchString?: string) => {
+    const itemsToFilter = searchString !== undefined ? items : inventoryItems;
+    
+    const filteredItems = itemsToFilter.filter(item => {
+      if (searchString !== undefined) {
+          const q = searchString.toLowerCase();
+          const itemName = (item.name || "").toLowerCase();
+          const itemCat = (item.category || "").toLowerCase();
+          return itemName.includes(q) || itemCat.includes(q);
+      }
+
       if (filterCat !== 'All' && item.category !== filterCat) return false;
       
       const itemLocs = item.locations || [];
@@ -803,15 +809,16 @@ export default function App() {
     }
 
     let groups: { name: string; items: GroceryItem[] }[] = [];
+    const effectiveGroupBy = searchString !== undefined ? 'none' : groupBy;
 
-    if (groupBy === 'category') {
+    if (effectiveGroupBy === 'category') {
       const g = filteredItems.reduce((acc, item) => {
         if (!acc[item.category]) acc[item.category] = [];
         acc[item.category].push(item);
         return acc;
       }, {} as Record<string, GroceryItem[]>);
       groups = CATEGORIES.filter(c => g[c]?.length > 0).map(c => ({ name: c, items: g[c] }));
-    } else {
+    } else if (effectiveGroupBy === 'location') {
       const g: Record<string, GroceryItem[]> = {};
       filteredItems.forEach(item => {
         const itemLocs = item.locations || [];
@@ -828,166 +835,237 @@ export default function App() {
         }
       });
       groups = Object.keys(g).sort().map(k => ({ name: k, items: g[k] }));
+    } else {
+      groups = [{ name: 'Search Results', items: filteredItems }];
     }
 
-    return (
-      <Accordion className="space-y-4 mt-4 sm:mt-6 w-full">
-        {groups.map(group => (
-          <AccordionItem key={group.name} value={group.name} className="border border-gray-200 bg-white rounded-xl shadow-sm overflow-hidden data-[state=open]:pb-4">
-            <AccordionTrigger 
-              className="hover:no-underline px-4 py-4 font-semibold text-lg text-gray-800 transition-colors hover:bg-gray-50/50"
-              onTouchStart={() => startLongPress(group.name)}
-              onTouchEnd={cancelLongPress}
-              onTouchMove={cancelLongPress}
-              onContextMenu={(e) => handleContextMenu(e, group.name)}
-            >
-              <div className="flex items-center gap-2">
-                 {group.name} <Badge variant="secondary" className="ml-2 bg-gray-100 text-gray-600 border-none font-medium">{group.items.length}</Badge>
-              </div>
-            </AccordionTrigger>
-            <AccordionContent className="px-4 pt-2">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-                {group.items.map(item => {
-                let displayInventoryQuantity = item.inventoryQuantity;
-                if (groupBy === 'location') {
-                    displayInventoryQuantity = (item.inventoryEntries || [])
-                        .filter(e => (e.location || 'Unassigned') === group.name || (!e.location && group.name === 'Unassigned'))
-                        .reduce((sum, e) => sum + e.quantity, 0);
-                    // Special case if there are no entries at all
-                    if (!item.inventoryEntries || item.inventoryEntries.length === 0) {
-                        displayInventoryQuantity = item.inventoryQuantity;
-                    }
-                }
-                return (
-                <div key={`${group.name}-${item.id}`} onClick={() => toggleExpanded(item.id!)} className="bg-white p-3 sm:p-4 rounded-xl shadow-sm ring-1 ring-gray-900/5 flex flex-col gap-2 sm:gap-3 cursor-pointer hover:shadow-md transition-shadow">
-                  <div className="flex justify-between items-start gap-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <div className="font-medium text-gray-900 truncate" title={item.name}>{item.name}</div>
-                        {item.inventoryEntries?.some(e => e.isOpened) && (
-                          <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 bg-orange-500 text-white border-none font-semibold shadow-sm">
-                            OPENED
-                          </Badge>
-                        )}
-                      </div>
-                      {groupBy === 'category' && (
-                        <div className="flex flex-wrap gap-1 mt-1.5">
-                          {(item.locations || [item.location]).filter(Boolean).map(loc => (
-                            <Badge key={loc!} variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-gray-50">{loc}</Badge>
-                          ))}
-                        </div>
-                      )}
-                      {groupBy === 'location' && (
-                          <div className="flex flex-wrap gap-1 mt-1.5">
-                            <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-gray-50">{item.category}</Badge>
-                          </div>
-                      )}
-                    </div>
-                    <div className="flex flex-col items-end gap-1 shrink-0">
-                      <div className="flex items-center gap-1">
-                        <span className="text-lg font-bold text-gray-900">{displayInventoryQuantity} <span className="text-xs text-gray-500 font-normal">count</span></span>
-                      </div>
-                      {item.shoppingQuantity > 0 && <span className="text-xs text-blue-600 font-medium">+{item.shoppingQuantity} {item.unit || ""} to buy</span>}
-                      <div className="flex gap-1 mt-1" onClick={e => e.stopPropagation()}>
-                        <Button variant="ghost" size="icon" className="h-6 w-6 text-gray-400 hover:text-blue-600" onClick={() => { setEditingItem(item); setIsDialogOpen(true); }}>
-                          <Edit className="w-3.5 h-3.5" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-6 w-6 text-red-400 hover:text-red-700" onClick={(e) => {
-                          e.stopPropagation();
-                          handleDelete(item.id!);
-                        }}>
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {expandedItems[item.id!] && item.inventoryEntries && item.inventoryEntries.length > 0 && (
-                    <div className="bg-gray-50/50 rounded-lg text-xs mt-3 border border-gray-100 divide-y divide-gray-100" onClick={e => e.stopPropagation()}>
-                       {item.inventoryEntries
-                          .filter(entry => groupBy !== 'location' || (entry.location || 'Unassigned') === group.name || (!entry.location && group.name === 'Unassigned'))
-                          .map(entry => (
-                         <div key={entry.id} className="p-2 flex justify-between items-center hover:bg-gray-50 transition-colors">
-                           <div className="flex flex-col gap-0.5">
-                             <div className="flex items-center gap-1.5 pl-1.5 border-l-2 border-gray-300">
-                                 <span className="font-semibold text-gray-700">
-                                   {entry.isOpened && entry.unit === 'pcs' ? 
-                                      (entry.amount ? `${entry.amount} ${entry.unit || item.unit || ''}` : `1 ${entry.unit || item.unit || ''}`) : 
-                                      (entry.amount ? `${entry.quantity} x ${entry.amount} ${entry.unit || item.unit || ''}` : `${entry.quantity} ${entry.unit || item.unit || 'Count'}`)
-                                   }
-                                 </span>
-                                 <div className="relative inline-flex items-center ml-1">
-                                   <select 
-                                       value={entry.location || ''} 
-                                       onChange={(e) => handleMoveEntry(item, entry.id, e.target.value)} 
-                                       onClick={(e) => e.stopPropagation()}
-                                       className="appearance-none bg-blue-50/50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[10px] font-medium rounded pl-1.5 pr-4 py-0.5 cursor-pointer focus:ring-0 max-w-[120px] truncate"
-                                   >
-                                       <option value="" disabled>Move...</option>
-                                       {locations.map(loc => <option key={loc} value={loc}>{loc}</option>)}
-                                   </select>
-                                   <ChevronDown className="w-2.5 h-2.5 text-blue-500 absolute right-1 top-1/2 -translate-y-1/2 pointer-events-none" />
-                                 </div>
-                                 <Button 
-                                    variant={entry.isOpened ? "default" : "outline"} 
-                                    size="sm" 
-                                    className={`h-5 text-[10px] px-1.5 ml-1 ${entry.isOpened ? "bg-orange-500 hover:bg-orange-600 text-white" : "text-gray-500 border-gray-300"}`}
-                                    onClick={(e) => { e.stopPropagation(); toggleEntryStatus(item, entry.id); }}
-                                 >
-                                    {entry.isOpened ? "Opened" : "Unopened"}
-                                 </Button>
-                             </div>
-                             {entry.label && <span className="text-gray-500 pl-2">{entry.label}</span>}
-                             {entry.expiryDate && <span className={`pl-2 ${new Date(entry.expiryDate) < new Date() ? "text-red-500 font-medium" : "text-gray-400"}`}>Exp: {entry.expiryDate}</span>}
-                             {(entry.dateBought || entry.dateAdded) && <div className="text-[10px] text-gray-400 pl-2">Bought: {entry.dateBought || entry.dateAdded}</div>}
-                             {entry.isOpened && (
-                                <span className="text-[10px] text-orange-600 flex items-center gap-0.5 pl-2 mt-0.5">
-                                  <span className="font-semibold uppercase text-[9px]">Opened:</span> 
-                                  <input 
-                                    type="date" 
-                                    value={entry.openedDate || ""} 
-                                    onChange={(e) => updateEntryOpenedDate(item, entry.id, e.target.value)}
-                                    className="bg-transparent border-none p-0 text-[10px] focus:ring-0 w-[85px] h-[18px]"
-                                    onClick={(e) => e.stopPropagation()}
-                                  />
-                                  {entry.openedDate && (
-                                    <Button variant="ghost" size="icon" className="h-[14px] w-[14px] flex-shrink-0 text-orange-400 hover:text-orange-600 hover:bg-orange-100/50 p-0" onClick={(e) => { e.stopPropagation(); updateEntryOpenedDate(item, entry.id, ""); }}>
-                                      <X className="w-2.5 h-2.5" />
-                                    </Button>
-                                  )}
-                                </span>
-                             )}
-                             {entry.tags && entry.tags.length > 0 && (
-                               <div className="flex flex-wrap gap-1 pl-2 mt-0.5">
-                                 {entry.tags.map(tag => (
-                                   <Badge key={tag} variant="secondary" className="text-[9px] px-1 py-0 h-4 bg-gray-100">{tag}</Badge>
-                                 ))}
-                               </div>
-                             )}
-                           </div>
-                           <div className="flex items-center gap-1">
-                              <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, -1); }} title="Decrease count">
-                                 <Minus className="w-3.5 h-3.5" />
-                              </Button>
-                              <span className="text-sm font-medium w-6 text-center text-gray-800">{entry.isOpened && entry.unit === 'pcs' ? (entry.amount || 0) : entry.quantity}</span>
-                              <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, 1); }} title="Increase count">
-                                 <Plus className="w-3.5 h-3.5" />
-                              </Button>
-                           </div>
-                         </div>
-                       ))}
-                    </div>
-                  )}
+    const content = groups.map(group => {
+      const gridContent = (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+          {group.items.map(item => {
+          let displayInventoryQuantity = item.inventoryQuantity;
+          let relevantEntries = item.inventoryEntries || [];
+          if (effectiveGroupBy === 'location') {
+              relevantEntries = relevantEntries.filter(e => (e.location || 'Unassigned') === group.name || (!e.location && group.name === 'Unassigned'));
+              displayInventoryQuantity = relevantEntries.reduce((sum, e) => sum + e.quantity, 0);
+              // Special case if there are no entries at all
+              if (!item.inventoryEntries || item.inventoryEntries.length === 0) {
+                  displayInventoryQuantity = item.inventoryQuantity;
+              }
+          }
+          
+          const openedPcsEntries = relevantEntries.filter(e => e.isOpened && e.unit === 'pcs');
+          let openedPcsText = "";
+          if (openedPcsEntries.length > 0) {
+              const totalPcs = openedPcsEntries.reduce((sum, e) => sum + (e.amount || 0), 0);
+              openedPcsText = `, ${totalPcs} pcs`;
+          }
 
-                  {expandedItems[item.id!] && item.notes && <div className="text-xs text-gray-500 mt-1 line-clamp-2 italic border-t pt-2" title={item.notes}>{item.notes}</div>}
+          return (
+          <div key={`${group.name}-${item.id}`} onClick={() => toggleExpanded(item.id!)} className="bg-white p-3 sm:p-4 rounded-xl shadow-sm ring-1 ring-gray-900/5 flex flex-col gap-2 sm:gap-3 cursor-pointer hover:shadow-md transition-shadow">
+            <div className="flex justify-between items-start gap-2">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <div className="font-medium text-gray-900 truncate" title={item.name}>{item.name}</div>
+                  {item.inventoryEntries?.some(e => e.isOpened) && (
+                    <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 bg-orange-500 text-white border-none font-semibold shadow-sm">
+                      OPENED
+                    </Badge>
+                  )}
                 </div>
-              );
-              })}
+                {effectiveGroupBy === 'category' && (
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {(item.locations || [item.location]).filter(Boolean).map(loc => (
+                      <Badge key={loc!} variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-gray-50">{loc}</Badge>
+                    ))}
+                  </div>
+                )}
+                {effectiveGroupBy === 'location' && (
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-gray-50">{item.category}</Badge>
+                    </div>
+                )}
+              </div>
+              <div className="flex flex-col items-end gap-1 shrink-0">
+                <div className="flex items-center gap-1">
+                  <span className="text-lg font-bold text-gray-900">{displayInventoryQuantity} <span className="text-xs text-gray-500 font-normal">count{openedPcsText}</span></span>
+                </div>
+                {item.shoppingQuantity > 0 && <span className="text-xs text-blue-600 font-medium">+{item.shoppingQuantity} {item.unit || ""} to buy</span>}
+                <div className="flex gap-1 mt-1" onClick={e => e.stopPropagation()}>
+                  <Button variant="ghost" size="icon" className="h-6 w-6 text-gray-400 hover:text-blue-600" onClick={() => { setEditingItem(item); setIsDialogOpen(true); }}>
+                    <Edit className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-6 w-6 text-red-400 hover:text-red-700" onClick={(e) => {
+                    e.stopPropagation();
+                    handleDelete(item.id!);
+                  }}>
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </div>
             </div>
+            
+            {expandedItems[item.id!] && item.inventoryEntries && item.inventoryEntries.length > 0 && (
+              <div className="bg-gray-50/50 rounded-lg text-xs mt-3 border border-gray-100 divide-y divide-gray-100" onClick={e => e.stopPropagation()}>
+                 {item.inventoryEntries
+                    .filter(entry => effectiveGroupBy !== 'location' || (entry.location || 'Unassigned') === group.name || (!entry.location && group.name === 'Unassigned'))
+                    .map(entry => (
+                   <div key={entry.id} className="p-2 flex justify-between items-center hover:bg-gray-100 transition-colors cursor-pointer" onClick={(e) => { e.stopPropagation(); setEditingItem(item); setFocusedEntryId(entry.id); setIsDialogOpen(true); }}>
+                     <div className="flex flex-col gap-0.5">
+                       <div className="flex items-center gap-1.5 pl-1.5 border-l-2 border-gray-300">
+                           <span className="font-semibold text-gray-700">
+                             {entry.isOpened && entry.unit === 'pcs' ? 
+                                (entry.amount ? `${entry.quantity} count, ${entry.amount} pcs` : `${entry.quantity} count, 1 pcs`) : 
+                                (entry.amount ? `${entry.quantity} x ${entry.amount} ${entry.unit || item.unit || ''}` : `${entry.quantity} ${entry.unit || item.unit || 'Count'}`)
+                             }
+                           </span>
+                           <div className="relative inline-flex items-center ml-1">
+                             <select 
+                                 value={entry.location || ''} 
+                                 onChange={(e) => handleMoveEntry(item, entry.id, e.target.value)} 
+                                 onClick={(e) => e.stopPropagation()}
+                                 className="appearance-none bg-blue-50/50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[10px] font-medium rounded pl-1.5 pr-4 py-0.5 cursor-pointer focus:ring-0 max-w-[120px] truncate"
+                             >
+                                 <option value="" disabled>Move...</option>
+                                 {locations.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                             </select>
+                             <ChevronDown className="w-2.5 h-2.5 text-blue-500 absolute right-1 top-1/2 -translate-y-1/2 pointer-events-none" />
+                           </div>
+                           <Button 
+                              variant={entry.isOpened ? "default" : "outline"} 
+                              size="sm" 
+                              className={`h-5 text-[10px] px-1.5 ml-1 ${entry.isOpened ? "bg-orange-500 hover:bg-orange-600 text-white" : "text-gray-500 border-gray-300"}`}
+                              onClick={(e) => { e.stopPropagation(); toggleEntryStatus(item, entry.id); }}
+                           >
+                              {entry.isOpened ? "Opened" : "Unopened"}
+                           </Button>
+                       </div>
+                       {entry.label && <span className="text-gray-500 pl-2">{entry.label}</span>}
+                       {entry.expiryDate && <span className={`pl-2 ${new Date(entry.expiryDate) < new Date() ? "text-red-500 font-medium" : "text-gray-400"}`}>Exp: {entry.expiryDate}</span>}
+                       {(entry.dateBought || entry.dateAdded) && <div className="text-[10px] text-gray-400 pl-2">Bought: {entry.dateBought || entry.dateAdded}</div>}
+                       {entry.isOpened && (
+                          <span className="text-[10px] text-orange-600 flex items-center gap-0.5 pl-2 mt-0.5">
+                            <span className="font-semibold uppercase text-[9px]">Opened:</span> 
+                            <input 
+                              type="date" 
+                              value={entry.openedDate || ""} 
+                              onChange={(e) => updateEntryOpenedDate(item, entry.id, e.target.value)}
+                              className="bg-transparent border-none p-0 text-[10px] focus:ring-0 w-[85px] h-[18px]"
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                            {entry.openedDate && (
+                              <Button variant="ghost" size="icon" className="h-[14px] w-[14px] flex-shrink-0 text-orange-400 hover:text-orange-600 hover:bg-orange-100/50 p-0" onClick={(e) => { e.stopPropagation(); updateEntryOpenedDate(item, entry.id, ""); }}>
+                                <X className="w-2.5 h-2.5" />
+                              </Button>
+                            )}
+                          </span>
+                       )}
+                       {entry.tags && entry.tags.length > 0 && (
+                         <div className="flex flex-wrap gap-1 pl-2 mt-0.5">
+                           {entry.tags.map(tag => (
+                             <Badge key={tag} variant="secondary" className="text-[9px] px-1 py-0 h-4 bg-gray-100">{tag}</Badge>
+                           ))}
+                         </div>
+                       )}
+                     </div>
+                     <div className="flex items-center gap-1">
+                        <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, -1); }} title="Decrease count">
+                           <Minus className="w-3.5 h-3.5" />
+                        </Button>
+                        <span className="text-sm font-medium w-6 text-center text-gray-800">{entry.isOpened && entry.unit === 'pcs' ? (entry.amount || 0) : entry.quantity}</span>
+                        <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, 1); }} title="Increase count">
+                           <Plus className="w-3.5 h-3.5" />
+                        </Button>
+                     </div>
+                   </div>
+                 ))}
+              </div>
+            )}
+
+            {expandedItems[item.id!] && item.priceHistory && item.priceHistory.length > 0 && (
+              <div className="bg-blue-50/30 rounded-lg text-xs mt-3 border border-blue-100" onClick={e => e.stopPropagation()}>
+                <div className="p-2 border-b border-blue-100 font-semibold text-blue-800 uppercase tracking-wider text-[10px]">Price History</div>
+                
+                {item.priceHistory.length > 1 && (
+                  <div className="h-32 w-full p-2 pb-0">
+                      <ResponsiveContainer width="100%" height="100%">
+                          <RechartsLineChart data={[...item.priceHistory].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()).map(e => ({
+                              date: new Date(e.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+                              unitPrice: Number((e.isDiscount && e.dealPrice && e.dealQuantity ? Number(e.dealPrice) / Number(e.dealQuantity) : Number(e.price) / Number(e.quantity)).toFixed(2))
+                          }))}>
+                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                              <XAxis dataKey="date" fontSize={10} tickLine={false} axisLine={false} tickMargin={8} minTickGap={15} />
+                              <YAxis width={30} fontSize={10} tickLine={false} axisLine={false} tickFormatter={(value) => `$${value}`} />
+                              <Tooltip contentStyle={{ borderRadius: '8px', fontSize: '12px', padding: '4px 8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} formatter={(value: number) => [`$${value.toFixed(2)}`, 'Unit Price']} labelStyle={{ color: '#6B7280', marginBottom: '2px' }} />
+                              <Line type="monotone" dataKey="unitPrice" stroke="#3B82F6" strokeWidth={2} dot={{ r: 3, fill: "#3B82F6", strokeWidth: 0 }} activeDot={{ r: 5 }} />
+                          </RechartsLineChart>
+                      </ResponsiveContainer>
+                  </div>
+                )}
+
+                <div className="divide-y divide-blue-50 max-h-[120px] overflow-y-auto">
+                    {[...item.priceHistory].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(entry => (
+                       <div key={entry.id} className="p-2 flex justify-between items-center bg-white hover:bg-gray-50 transition-colors">
+                           <div className="flex flex-col gap-0.5">
+                               <span className="font-semibold text-gray-700">{entry.store || "Unknown Store"}</span>
+                               <span className="text-[10px] text-gray-500">{entry.date}</span>
+                           </div>
+                           <div className="flex flex-col items-end gap-0.5">
+                               {entry.isDiscount && entry.dealPrice && entry.dealQuantity ? (
+                                   <>
+                                       <span className="font-bold text-green-700">${Number(entry.dealPrice).toFixed(2)}</span>
+                                       <span className="text-[9px] text-green-600">for {entry.dealQuantity}</span>
+                                   </>
+                               ) : (
+                                   <>
+                                       <span className="font-bold text-blue-700">${Number(entry.price).toFixed(2)}</span>
+                                       <span className="text-[9px] text-gray-500">for {entry.quantity} {entry.unitStr}</span>
+                                   </>
+                               )}
+                           </div>
+                       </div>
+                    ))}
+                </div>
+              </div>
+            )}
+
+            {expandedItems[item.id!] && item.notes && <div className="text-xs text-gray-500 mt-1 line-clamp-2 italic border-t pt-2" title={item.notes}>{item.notes}</div>}
+          </div>
+        );
+        })}
+      </div>
+      );
+
+      if (searchString !== undefined) {
+        return <div key={group.name} className="mt-4">{gridContent}</div>;
+      }
+
+      return (
+        <AccordionItem key={group.name} value={group.name} className="border border-gray-200 bg-white rounded-xl shadow-sm data-[state=open]:pb-4">
+          <AccordionTrigger 
+            className="hover:no-underline px-4 py-4 font-semibold text-lg text-gray-800 transition-colors hover:bg-gray-50/50 sticky top-0 z-10 data-[state=open]:bg-white/95 backdrop-blur-sm select-none rounded-t-xl data-[state=closed]:rounded-b-xl focus-visible:ring-0"
+            onTouchStart={() => startLongPress(group.name)}
+            onTouchEnd={cancelLongPress}
+            onTouchMove={cancelLongPress}
+            onContextMenu={(e) => handleContextMenu(e, group.name)}
+          >
+            <div className="flex items-center gap-2">
+               {group.name} <Badge variant="secondary" className="ml-2 bg-gray-100 text-gray-600 border-none font-medium">{group.items.length}</Badge>
+            </div>
+          </AccordionTrigger>
+          <AccordionContent className="px-4 pt-2">
+            {gridContent}
           </AccordionContent>
         </AccordionItem>
-      ))}
-    </Accordion>
+      );
+    });
+
+    return searchString !== undefined ? (
+       <div className="w-full">{content}</div>
+    ) : (
+      <Accordion className="space-y-4 mt-4 sm:mt-6 w-full">
+        {content}
+      </Accordion>
     );
   };
 
@@ -1143,14 +1221,17 @@ export default function App() {
 
     let groups: { name: string; items: GroceryItem[] }[] = [];
 
-    if (groupBy === 'category') {
+    let activeGroupBy = groupBy;
+    if (isSuggested) activeGroupBy = 'category';
+
+    if (activeGroupBy === 'category') {
       const g = filteredItems.reduce((acc, item) => {
         if (!acc[item.category]) acc[item.category] = [];
         acc[item.category].push(item);
         return acc;
       }, {} as Record<string, GroceryItem[]>);
       groups = CATEGORIES.filter(c => g[c]?.length > 0).map(c => ({ name: c, items: g[c] }));
-    } else if (groupBy === 'store') {
+    } else if (activeGroupBy === 'store') {
       const g = filteredItems.reduce((acc, item) => {
         const store = item.shoppingStore || 'Unassigned';
         if (!acc[store]) acc[store] = [];
@@ -1180,9 +1261,9 @@ export default function App() {
     return (
       <Accordion type="multiple" className="space-y-4 w-full">
         {groups.map(group => (
-          <AccordionItem key={group.name} value={group.name} className="border border-gray-200 bg-white rounded-xl shadow-sm overflow-hidden data-[state=open]:pb-4">
+          <AccordionItem key={group.name} value={group.name} className="border border-gray-200 bg-white rounded-xl shadow-sm data-[state=open]:pb-4">
             <AccordionTrigger 
-              className="hover:no-underline px-4 py-4 font-semibold text-lg text-gray-800 transition-colors hover:bg-gray-50/50"
+              className="hover:no-underline px-4 py-4 font-semibold text-lg text-gray-800 transition-colors hover:bg-gray-50/50 sticky top-0 z-10 data-[state=open]:bg-white/95 backdrop-blur-sm select-none rounded-t-xl data-[state=closed]:rounded-b-xl focus-visible:ring-0"
               onTouchStart={() => startLongPress(group.name)}
               onTouchEnd={cancelLongPress}
               onTouchMove={cancelLongPress}
@@ -1196,16 +1277,23 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                 {group.items.map(item => {
                 let displayInventoryQuantity = item.inventoryQuantity;
-                if (!isShoppingList && groupBy === 'location') {
-                    displayInventoryQuantity = (item.inventoryEntries || [])
-                        .filter(e => (e.location || 'Unassigned') === group.name || (!e.location && group.name === 'Unassigned'))
-                        .reduce((sum, e) => sum + e.quantity, 0);
+                let relevantEntries = item.inventoryEntries || [];
+                if (!isShoppingList && activeGroupBy === 'location') {
+                    relevantEntries = relevantEntries.filter(e => (e.location || 'Unassigned') === group.name || (!e.location && group.name === 'Unassigned'));
+                    displayInventoryQuantity = relevantEntries.reduce((sum, e) => sum + e.quantity, 0);
                     // Special case if there are no entries at all
                     if (!item.inventoryEntries || item.inventoryEntries.length === 0) {
                         displayInventoryQuantity = item.inventoryQuantity;
                     }
                 }
                 
+                const openedPcsEntries = relevantEntries.filter(e => e.isOpened && e.unit === 'pcs');
+                let openedPcsText = "";
+                if (openedPcsEntries.length > 0) {
+                    const totalPcs = openedPcsEntries.reduce((sum, e) => sum + (e.amount || 0), 0);
+                    openedPcsText = `, ${totalPcs} pcs`;
+                }
+
                 let priceInsights = null;
                 if (isShoppingList && item.priceHistory && item.priceHistory.length > 0) {
                   const sortedPrices = [...item.priceHistory].sort((a, b) => b.date.localeCompare(a.date));
@@ -1306,11 +1394,6 @@ export default function App() {
                           </div>
                         )}
                       </div>
-                      <div className="pt-1.5 border-t border-slate-200/60 flex justify-end">
-                         <span className="flex items-center text-blue-600 hover:text-blue-800 font-medium cursor-pointer transition-colors text-[10px]" onClick={() => handleGoToPriceAnalysis(item.id!)}>
-                           Price Analysis <ChevronRight className="w-2.5 h-2.5 ml-0.5" />
-                         </span>
-                      </div>
                     </div>
                   )}
 
@@ -1319,12 +1402,12 @@ export default function App() {
                        {(item.inventoryEntries || [])
                           .filter(entry => groupBy !== 'location' || (entry.location || 'Unassigned') === group.name || (!entry.location && group.name === 'Unassigned'))
                           .map(entry => (
-                         <div key={entry.id} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg border border-gray-100 group">
+                         <div key={entry.id} className="flex items-center justify-between p-2 bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer rounded-lg border border-gray-100 group" onClick={(e) => { e.stopPropagation(); setEditingItem(item); setFocusedEntryId(entry.id); setIsDialogOpen(true); }}>
                            <div className="min-w-0 flex-1">
                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                                <span className="text-[11px] font-bold text-gray-800">
                                    {entry.isOpened && entry.unit === 'pcs' ? 
-                                      (entry.amount ? `${entry.amount} ${entry.unit || item.unit || ''}` : `1 ${entry.unit || item.unit || ''}`) : 
+                                      (entry.amount ? `${entry.quantity} count, ${entry.amount} pcs` : `${entry.quantity} count, 1 pcs`) : 
                                       (entry.amount ? `${entry.quantity} x ${entry.amount} ${entry.unit || item.unit || ''}` : `${entry.quantity} ${entry.unit || item.unit || 'Count'}`)
                                    }
                                </span>
@@ -1422,7 +1505,7 @@ export default function App() {
                           <Button variant="outline" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); updateQuantities(item, -1, 0, groupBy === 'location' ? group.name : undefined); }}>
                             <Minus className="w-3 h-3" />
                           </Button>
-                          <span className="text-sm font-medium w-6 text-center cursor-pointer">{displayInventoryQuantity} <span className="text-xs text-gray-500 font-normal">{item.unit}</span></span>
+                          <span className="text-sm font-medium whitespace-nowrap text-center cursor-pointer">{displayInventoryQuantity} <span className="text-xs text-gray-500 font-normal">{item.unit || "count"}{openedPcsText}</span></span>
                           <Button variant="outline" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); updateQuantities(item, 1, 0, groupBy === 'location' ? group.name : undefined); }}>
                             <Plus className="w-3 h-3" />
                           </Button>
@@ -1597,21 +1680,37 @@ export default function App() {
             {renderControls()}
             {renderInventoryItems()}
           </TabsContent>
-          <TabsContent value="search" className="focus-visible:outline-none">
-            <SearchTab items={items} onUpdateItem={handleUpdateItem} />
+          <TabsContent value="search" className="focus-visible:outline-none space-y-4 pt-2">
+            <div className="relative">
+              <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <Input 
+                type="text" 
+                placeholder="Search items by name, category..." 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10 h-12 text-lg shadow-sm"
+              />
+            </div>
+            {renderInventoryItems(searchQuery)}
           </TabsContent>
         </Tabs>
       </main>
 
       <ItemDialog 
         isOpen={isDialogOpen} 
-        onOpenChange={setIsDialogOpen} 
+        onOpenChange={(open) => {
+          setIsDialogOpen(open);
+          if (!open) {
+            setFocusedEntryId(null);
+          }
+        }}
         onSave={handleSaveItem} 
         item={editingItem}
         existingItems={items}
         locations={locations}
         title={editingItem ? "Edit Item" : "Add New Item"}
-        defaultMode={activeTab}
+        defaultMode={activeTab === 'shopping' ? 'shopping' : 'inventory'}
+        focusedEntryId={focusedEntryId}
       />
 
       <MoveEntryDialog 

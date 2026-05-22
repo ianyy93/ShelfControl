@@ -8,6 +8,7 @@ import { Textarea } from "./ui/textarea";
 import { X, Plus, Minus, Trash2, Split } from "lucide-react";
 import { GroceryItem, CATEGORIES, Category, InventoryEntry, PriceEntry } from "../types";
 import { Badge } from "./ui/badge";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 interface ItemDialogProps {
   item?: GroceryItem;
@@ -18,6 +19,7 @@ interface ItemDialogProps {
   onSave: (item: Partial<GroceryItem> & { newPriceEntry?: Omit<PriceEntry, 'id'>, processQuantity?: number }) => Promise<void>;
   title: string;
   defaultMode: 'shopping' | 'inventory';
+  focusedEntryId?: string | null;
 }
 
 function TagInput({ tags, onChange }: { tags: string[], onChange: (tags: string[]) => void }) {
@@ -129,7 +131,7 @@ const UnitSelect = ({ value, onChange, className }: { value: string, onChange: (
   );
 };
 
-export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpenChange, onSave, title, defaultMode }: ItemDialogProps) {
+export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpenChange, onSave, title, defaultMode, focusedEntryId }: ItemDialogProps) {
   const [name, setName] = useState("");
   const [category, setCategory] = useState<Category | string>("Produce");
   const [customCategory, setCustomCategory] = useState("");
@@ -189,7 +191,9 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
         }
 
         // Set mode to whatever it has positive quantity for, or keep default
-        if (defaultMode === 'shopping') {
+        if (focusedEntryId) {
+            setMode('inventory');
+        } else if (defaultMode === 'shopping') {
             setMode('shopping');
         } else if (defaultMode === 'inventory') {
             setMode('inventory');
@@ -209,10 +213,25 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
         } else if (defaultMode === 'inventory') {
             setInventoryEntries([{ id: Math.random().toString(36).substr(2, 9), location: "", quantity: 1, unit }]);
         }
-        setMode(defaultMode);
+        if (focusedEntryId) {
+            setMode('inventory');
+        } else {
+            setMode(defaultMode);
+        }
+      }
+      
+      if (focusedEntryId) {
+         setTimeout(() => {
+            const el = document.getElementById(`entry-${focusedEntryId}`);
+            if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                el.classList.add('ring-2', 'ring-blue-500', 'ring-offset-2');
+                setTimeout(() => el.classList.remove('ring-2', 'ring-blue-500', 'ring-offset-2'), 2000);
+            }
+         }, 300);
       }
     }
-  }, [isOpen, item, defaultMode]);
+  }, [isOpen, item, defaultMode, focusedEntryId]);
 
   const handleUnitChange = (val: string) => {
     setUnit(val);
@@ -817,6 +836,55 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
             {loading ? "Saving..." : "Save Item"}
           </Button>
         </form>
+
+        {mode === 'prices' && item && item.priceHistory && item.priceHistory.length > 0 && (
+          <div className="px-1 pb-4">
+              <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Price History ({item.priceHistory.length})</h4>
+              
+              {item.priceHistory.length > 1 && (
+                  <div className="h-32 w-full mb-4 mt-2">
+                      <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={[...item.priceHistory].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()).map(e => ({
+                              date: new Date(e.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+                              unitPrice: Number((e.isDiscount && e.dealPrice && e.dealQuantity ? Number(e.dealPrice) / Number(e.dealQuantity) : Number(e.price) / Number(e.quantity)).toFixed(2))
+                          }))}>
+                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                              <XAxis dataKey="date" fontSize={10} tickLine={false} axisLine={false} tickMargin={8} minTickGap={15} />
+                              <YAxis width={30} fontSize={10} tickLine={false} axisLine={false} tickFormatter={(value) => `$${value}`} />
+                              <Tooltip contentStyle={{ borderRadius: '8px', fontSize: '12px', padding: '4px 8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} formatter={(value: number) => [`$${value.toFixed(2)}`, 'Unit Price']} labelStyle={{ color: '#6B7280', marginBottom: '2px' }} />
+                              <Line type="monotone" dataKey="unitPrice" stroke="#3B82F6" strokeWidth={2} dot={{ r: 3, fill: "#3B82F6", strokeWidth: 0 }} activeDot={{ r: 5 }} />
+                          </LineChart>
+                      </ResponsiveContainer>
+                  </div>
+              )}
+
+              <div className="space-y-2 max-h-[150px] overflow-y-auto pr-1">
+                  {[...item.priceHistory]
+                      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                      .map((entry) => (
+                      <div key={entry.id} className="bg-gray-50 border rounded-lg p-2 text-xs flex justify-between items-center gap-2">
+                          <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold text-gray-700">{entry.store || "Unknown Store"}</span>
+                              <span className="text-gray-500">{entry.date}</span>
+                          </div>
+                          <div className="flex flex-col items-end gap-0.5">
+                              {entry.isDiscount && entry.dealPrice && entry.dealQuantity ? (
+                                  <>
+                                      <span className="font-bold text-green-700">${Number(entry.dealPrice).toFixed(2)}</span>
+                                      <span className="text-[10px] text-green-600">for {entry.dealQuantity}</span>
+                                  </>
+                              ) : (
+                                  <>
+                                      <span className="font-bold text-blue-700">${Number(entry.price).toFixed(2)}</span>
+                                      <span className="text-[10px] text-gray-500">for {entry.quantity} {entry.unitStr}</span>
+                                  </>
+                              )}
+                          </div>
+                      </div>
+                  ))}
+              </div>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
