@@ -891,15 +891,15 @@ export default function App() {
                   <span className="text-lg font-bold text-gray-900">{displayInventoryQuantity} <span className="text-xs text-gray-500 font-normal">count{openedPcsText}</span></span>
                 </div>
                 {item.shoppingQuantity > 0 && <span className="text-xs text-blue-600 font-medium">+{item.shoppingQuantity} {item.unit || ""} to buy</span>}
-                <div className="flex gap-1 mt-1" onClick={e => e.stopPropagation()}>
-                  <Button variant="ghost" size="icon" className="h-6 w-6 text-gray-400 hover:text-blue-600" onClick={() => { setEditingItem(item); setIsDialogOpen(true); }}>
-                    <Edit className="w-3.5 h-3.5" />
+                <div className="flex gap-1 mt-1 -ml-2">
+                  <Button variant="ghost" size="icon" className="h-10 w-10 text-gray-400 hover:text-blue-600" onClick={(e) => { e.stopPropagation(); setEditingItem(item); setIsDialogOpen(true); }}>
+                    <Edit className="w-4 h-4" />
                   </Button>
-                  <Button variant="ghost" size="icon" className="h-6 w-6 text-red-400 hover:text-red-700" onClick={(e) => {
+                  <Button variant="ghost" size="icon" className="h-10 w-10 text-red-400 hover:text-red-700" onClick={(e) => {
                     e.stopPropagation();
                     handleDelete(item.id!);
                   }}>
-                    <Trash2 className="w-3.5 h-3.5" />
+                    <Trash2 className="w-4 h-4" />
                   </Button>
                 </div>
               </div>
@@ -1339,23 +1339,23 @@ export default function App() {
                       ) : null}
                       {item.notes && <div className={`${(isShoppingList || isSuggested) ? 'text-[11px] leading-tight' : 'text-xs'} text-gray-500 mt-1 line-clamp-2`} title={item.notes}>{item.notes}</div>}
                     </div>
-                    <div className="flex gap-1" style={{ flexShrink: 0 }}>
+                    <div className="flex gap-1 -mr-2" style={{ flexShrink: 0 }}>
                       {isSuggested && (
                         <Button 
                           variant="ghost" 
                           size="icon" 
-                          className="h-7 w-7 text-gray-400 hover:text-gray-600" 
+                          className="h-10 w-10 text-gray-400 hover:text-gray-600" 
                           onClick={(e) => { e.stopPropagation(); handleUpdateItem(item.id!, { isHiddenSuggestion: true }); }}
                           title="Hide from suggestions"
                         >
-                          <EyeOff className="w-3.5 h-3.5" />
+                          <EyeOff className="w-4 h-4" />
                         </Button>
                       )}
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); setEditingItem(item); setIsDialogOpen(true); }}>
-                        <Edit className="w-3.5 h-3.5" />
+                      <Button variant="ghost" size="icon" className="h-10 w-10" onClick={(e) => { e.stopPropagation(); setEditingItem(item); setIsDialogOpen(true); }}>
+                        <Edit className="w-4 h-4" />
                       </Button>
                       {!isSuggested && (
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500 hover:text-red-700" onClick={(e) => {
+                        <Button variant="ghost" size="icon" className="h-10 w-10 text-red-500 hover:text-red-700" onClick={(e) => {
                           e.stopPropagation();
                           if (isShoppingList) {
                               handleUpdateItem(item.id!, { shoppingQuantity: 0 });
@@ -1363,7 +1363,7 @@ export default function App() {
                               handleDelete(item.id!);
                           }
                         }}>
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-4 h-4" />
                         </Button>
                       )}
                     </div>
