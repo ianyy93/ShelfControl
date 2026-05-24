@@ -887,8 +887,16 @@ export default function App() {
                 )}
               </div>
               <div className="flex flex-col items-end gap-1 shrink-0">
-                <div className="flex items-center gap-1">
-                  <span className="text-lg font-bold text-gray-900">{displayInventoryQuantity} <span className="text-xs text-gray-500 font-normal">count{openedPcsText}</span></span>
+                <div className="flex items-center gap-2" onClick={(e) => { if (!expandedItems[item.id!]) { e.stopPropagation(); toggleExpanded(item.id!); } }}>
+                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); updateQuantities(item, -1, 0, effectiveGroupBy === 'location' ? group.name : undefined); }}>
+                    <Minus className="w-4 h-4" />
+                  </Button>
+                  <span className="text-lg font-bold text-gray-900 text-center min-w-[2rem]">
+                    {displayInventoryQuantity} <span className="text-[10px] text-gray-500 font-normal block -mt-1">{item.unit || "ct"}{openedPcsText}</span>
+                  </span>
+                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); updateQuantities(item, 1, 0, effectiveGroupBy === 'location' ? group.name : undefined); }}>
+                    <Plus className="w-4 h-4" />
+                  </Button>
                 </div>
                 {item.shoppingQuantity > 0 && <span className="text-xs text-blue-600 font-medium">+{item.shoppingQuantity} {item.unit || ""} to buy</span>}
                 <div className="flex gap-1 mt-1 -ml-2">
@@ -1613,7 +1621,7 @@ export default function App() {
       </header>
 
       <main className="flex-1 max-w-5xl w-full mx-auto px-2 sm:px-6 lg:px-8 pb-8 pt-0">
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'shopping' | 'inventory' | 'search')} className="w-full">
+        <Tabs value={activeTab} onValueChange={(v) => { window.scrollTo({ top: 0 }); setActiveTab(v as 'shopping' | 'inventory' | 'search'); }} className="w-full">
           <div className="sticky top-14 z-20 bg-gray-50 pt-4 pb-2 mb-4 -mx-2 px-2 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 border-b border-gray-200/50">
             <TabsList className="grid w-full lg:w-[898px] max-w-full grid-cols-3 bg-gray-200/50 rounded-xl h-auto min-h-[44px] sm:min-h-[42px] p-1 gap-1">
             <TabsTrigger value="shopping" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm py-2 px-1 flex-col sm:flex-row h-auto min-h-full">
