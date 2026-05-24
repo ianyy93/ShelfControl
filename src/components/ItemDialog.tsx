@@ -16,10 +16,12 @@ interface ItemDialogProps {
   locations?: string[];
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  onSave: (item: Partial<GroceryItem> & { newPriceEntry?: Omit<PriceEntry, 'id'>, processQuantity?: number }) => Promise<void>;
+  onSave: (item: Partial<GroceryItem> & { newPriceEntry?: Omit<PriceEntry, 'id'>, processQuantity?: number, editedPriceEntry?: PriceEntry, deletedPriceEntryId?: string }) => Promise<void>;
   title: string;
-  defaultMode: 'shopping' | 'inventory';
+  defaultMode: 'shopping' | 'inventory' | 'prices';
   focusedEntryId?: string | null;
+  focusedPriceId?: string | null;
+  restrictedMode?: boolean;
 }
 
 function TagInput({ tags, onChange }: { tags: string[], onChange: (tags: string[]) => void }) {
@@ -131,7 +133,7 @@ const UnitSelect = ({ value, onChange, className }: { value: string, onChange: (
   );
 };
 
-export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpenChange, onSave, title, defaultMode, focusedEntryId }: ItemDialogProps) {
+export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpenChange, onSave, title, defaultMode, focusedEntryId, focusedPriceId, restrictedMode }: ItemDialogProps) {
   const [name, setName] = useState("");
   const [category, setCategory] = useState<Category | string>("Produce");
   const [customCategory, setCustomCategory] = useState("");
@@ -171,6 +173,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
       setDealPrice("");
       setDealQuantity("");
       setProcessQuantity(0);
+
       if (item) {
         setName(item.name);
         setCategory(item.category);
@@ -190,9 +193,37 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
           setProcessQuantity(item.unprocessedQuantity);
         }
 
-        // Set mode to whatever it has positive quantity for, or keep default
-        if (focusedEntryId) {
+        if (focusedPriceId) {
+            let found = false;
+            if (focusedPriceId !== 'new' && item.priceHistory) {
+                const priceEntry = item.priceHistory.find(e => e.id === focusedPriceId);
+                if (priceEntry) {
+                    setPrice(priceEntry.price?.toString() || "");
+                    setPriceQuantity(priceEntry.quantity?.toString() || "1");
+                    setStore(priceEntry.store || "");
+                    setPriceUnit(priceEntry.unitStr || "");
+                    setPriceDate(priceEntry.date || new Date().toISOString().split('T')[0]);
+                    setIsDiscount(!!priceEntry.isDiscount);
+                    setDealPrice(priceEntry.dealPrice?.toString() || "");
+                    setDealQuantity(priceEntry.dealQuantity?.toString() || "");
+                    found = true;
+                }
+            }
+            if (!found) {
+                setPrice("");
+                setPriceQuantity("1");
+                setStore("");
+                setPriceUnit(item.unit || "");
+                setPriceDate(new Date().toISOString().split('T')[0]);
+                setIsDiscount(false);
+                setDealPrice("");
+                setDealQuantity("");
+            }
+            setMode('prices');
+        } else if (focusedEntryId) {
             setMode('inventory');
+        } else if (defaultMode === 'prices') {
+            setMode('prices');
         } else if (defaultMode === 'shopping') {
             setMode('shopping');
         } else if (defaultMode === 'inventory') {
@@ -231,7 +262,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
          }, 300);
       }
     }
-  }, [isOpen, item, defaultMode, focusedEntryId]);
+  }, [isOpen, item, defaultMode, focusedEntryId, focusedPriceId]);
 
   const handleUnitChange = (val: string) => {
     setUnit(val);
@@ -258,7 +289,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
 
     const finalCategory = (category === "Other" && customCategory) ? customCategory : category;
 
-    const updateData: Partial<GroceryItem> & { newPriceEntry?: Omit<PriceEntry, 'id'>, processQuantity?: number } = {
+    const updateData: Partial<GroceryItem> & { newPriceEntry?: Omit<PriceEntry, 'id'>, processQuantity?: number, editedPriceEntry?: PriceEntry } = {
       name,
       category: finalCategory as Category,
       unit,
@@ -282,7 +313,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
     }
 
     if ((price || isDiscount) && store) {
-      updateData.newPriceEntry = {
+      const priceData = {
         date: priceDate,
         price: finalPrice,
         quantity: finalQuantity,
@@ -292,8 +323,18 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
           isDiscount: true,
           dealPrice: Number(dealPrice),
           dealQuantity: Number(dealQuantity)
-        } : {})
+        } : {
+          isDiscount: false, // Ensure false explicitly in case it was toggled
+          dealPrice: null as any,
+          dealQuantity: null as any
+        })
       };
+      
+      if (focusedPriceId && focusedPriceId !== 'new') {
+          updateData.editedPriceEntry = { ...priceData, id: focusedPriceId };
+      } else {
+          updateData.newPriceEntry = priceData;
+      }
     }
 
     try {
@@ -420,16 +461,18 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 pt-4 max-h-[80vh] overflow-y-auto overflow-x-hidden overscroll-none px-1">
-          <div className="space-y-3">
-             <Label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Quick Actions / Modes</Label>
-             <Tabs value={mode} onValueChange={handleModeChange} className="w-full">
-               <TabsList className="grid w-full grid-cols-3">
-                 <TabsTrigger value="shopping">Shopping</TabsTrigger>
-                 <TabsTrigger value="inventory">Inventory</TabsTrigger>
-                 <TabsTrigger value="prices">Price</TabsTrigger>
-               </TabsList>
-             </Tabs>
-          </div>
+          {!restrictedMode && (
+              <div className="space-y-3">
+                 <Label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Quick Actions / Modes</Label>
+                 <Tabs value={mode} onValueChange={handleModeChange} className="w-full">
+                   <TabsList className="grid w-full grid-cols-3">
+                     <TabsTrigger value="shopping">Shopping</TabsTrigger>
+                     <TabsTrigger value="inventory">Inventory</TabsTrigger>
+                     <TabsTrigger value="prices">Price</TabsTrigger>
+                   </TabsList>
+                 </Tabs>
+              </div>
+          )}
 
           {mode === 'inventory' && item && item.unprocessedQuantity && item.unprocessedQuantity > 0 && (
              <div className="bg-orange-50/50 border border-orange-200 p-3 rounded-lg flex items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
@@ -453,99 +496,103 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
              </div>
           )}
 
-          <div className="space-y-2">
-            <Label htmlFor="name">Item Name</Label>
+          {!restrictedMode && (
+           <>
             <div className="space-y-2">
-              <Input 
-                id="name" 
-                value={name} 
-                onChange={handleNameInputChange} 
-                required 
-                placeholder="Type item name..." 
-                list="items-list"
-              />
-              <datalist id="items-list">
-                {Array.from(new Set(existingItems?.map(i => i.name)))
-                  .sort()
-                  .map(n => <option key={n} value={n} />)
-                }
-              </datalist>
-            </div>
-          </div>
-          
-          <div className={`grid gap-3 items-end ${mode === 'shopping' ? 'grid-cols-3' : 'grid-cols-2'}`}>
+              <Label htmlFor="name">Item Name</Label>
               <div className="space-y-2">
-                <Label htmlFor="category" className="text-xs font-semibold text-gray-500 uppercase tracking-tight">Category</Label>
-                <select 
-                  id="category"
-                  className={selectStyles}
-                  value={category} 
-                  onChange={e => setCategory(e.target.value)}
-                >
-                  {CATEGORIES.map(c => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
+                <Input 
+                  id="name" 
+                  value={name} 
+                  onChange={handleNameInputChange} 
+                  required 
+                  placeholder="Type item name..." 
+                  list="items-list"
+                />
+                <datalist id="items-list">
+                  {Array.from(new Set(existingItems?.map(i => i.name)))
+                    .sort()
+                    .map(n => <option key={n} value={n} />)
+                  }
+                </datalist>
               </div>
-              {category === 'Other' && (
-                <div className="space-y-2 animate-in fade-in slide-in-from-top-1 duration-200">
-                   <Label htmlFor="custom-category" className="text-xs font-semibold text-gray-500 uppercase tracking-tight italic">Other Name</Label>
-                   <Input 
-                     id="custom-category" 
-                     placeholder="e.g. Baking Supplies" 
-                     className="h-8 italic"
-                     value={customCategory}
-                     onChange={e => setCustomCategory(e.target.value)}
-                   />
-                </div>
-              )}
-              {mode === 'shopping' ? (
+            </div>
+            
+            <div className={`grid gap-3 items-end ${mode === 'shopping' ? 'grid-cols-3' : 'grid-cols-2'}`}>
                 <div className="space-y-2">
-                  <Label htmlFor="shopping-quantity" className="text-xs font-semibold text-gray-500 uppercase tracking-tight">Shopping Qty</Label>
-                  <div className="flex items-center gap-1.5">
-                    <Button type="button" variant="outline" size="icon" className="h-8 w-8 shrink-0" onClick={() => setShoppingQuantity(Math.max(0, Number(shoppingQuantity) - 1))}>
-                      <Minus className="w-3.5 h-3.5" />
-                    </Button>
-                    <Input 
-                      id="shopping-quantity"
-                      type="number" 
-                      step="any" 
-                      min="0" 
-                      value={shoppingQuantity} 
-                      onChange={e => setShoppingQuantity(e.target.value)} 
-                      required={mode==='shopping'} 
-                      className="h-8 text-center px-1"
-                    />
-                    <Button type="button" variant="outline" size="icon" className="h-8 w-8 shrink-0" onClick={() => setShoppingQuantity(Number(shoppingQuantity) + 1)}>
-                      <Plus className="w-3.5 h-3.5" />
-                    </Button>
+                  <Label htmlFor="category" className="text-xs font-semibold text-gray-500 uppercase tracking-tight">Category</Label>
+                  <select 
+                    id="category"
+                    className={selectStyles}
+                    value={category} 
+                    onChange={e => setCategory(e.target.value)}
+                  >
+                    {CATEGORIES.map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+                {category === 'Other' && (
+                  <div className="space-y-2 animate-in fade-in slide-in-from-top-1 duration-200">
+                     <Label htmlFor="custom-category" className="text-xs font-semibold text-gray-500 uppercase tracking-tight italic">Other Name</Label>
+                     <Input 
+                       id="custom-category" 
+                       placeholder="e.g. Baking Supplies" 
+                       className="h-8 italic"
+                       value={customCategory}
+                       onChange={e => setCustomCategory(e.target.value)}
+                     />
                   </div>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <Label htmlFor="unit" className="text-xs font-semibold text-gray-500 uppercase tracking-tight">Unit</Label>
-                  <UnitSelect value={unit} onChange={handleUnitChange} className={selectStyles} />
-                </div>
-              )}
-              {mode === 'shopping' && (
-                <>
+                )}
+                {mode === 'shopping' ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="shopping-quantity" className="text-xs font-semibold text-gray-500 uppercase tracking-tight">Shopping Qty</Label>
+                    <div className="flex items-center gap-1.5">
+                      <Button type="button" variant="outline" size="icon" className="h-8 w-8 shrink-0" onClick={() => setShoppingQuantity(Math.max(0, Number(shoppingQuantity) - 1))}>
+                        <Minus className="w-3.5 h-3.5" />
+                      </Button>
+                      <Input 
+                        id="shopping-quantity"
+                        type="number" 
+                        step="any" 
+                        min="0" 
+                        value={shoppingQuantity} 
+                        onChange={e => setShoppingQuantity(e.target.value)} 
+                        required={mode==='shopping'} 
+                        className="h-8 text-center px-1"
+                      />
+                      <Button type="button" variant="outline" size="icon" className="h-8 w-8 shrink-0" onClick={() => setShoppingQuantity(Number(shoppingQuantity) + 1)}>
+                        <Plus className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
                   <div className="space-y-2">
                     <Label htmlFor="unit" className="text-xs font-semibold text-gray-500 uppercase tracking-tight">Unit</Label>
                     <UnitSelect value={unit} onChange={handleUnitChange} className={selectStyles} />
                   </div>
-                  <div className="space-y-2 col-span-1 sm:col-span-3">
-                    <Label className="text-xs font-semibold text-gray-500 uppercase tracking-tight">Store / Merchant</Label>
-                    <Input 
-                      value={shoppingStore} 
-                      onChange={e => setShoppingStore(e.target.value)} 
-                      placeholder="e.g. Costco, Walmart" 
-                      className={selectStyles}
-                      list="stores-list"
-                    />
-                  </div>
-                </>
-              )}
-          </div>
+                )}
+                {mode === 'shopping' && (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="unit" className="text-xs font-semibold text-gray-500 uppercase tracking-tight">Unit</Label>
+                      <UnitSelect value={unit} onChange={handleUnitChange} className={selectStyles} />
+                    </div>
+                    <div className="space-y-2 col-span-1 sm:col-span-3">
+                      <Label className="text-xs font-semibold text-gray-500 uppercase tracking-tight">Store / Merchant</Label>
+                      <Input 
+                        value={shoppingStore} 
+                        onChange={e => setShoppingStore(e.target.value)} 
+                        placeholder="e.g. Costco, Walmart" 
+                        className={selectStyles}
+                        list="stores-list"
+                      />
+                    </div>
+                  </>
+                )}
+            </div>
+           </>
+          )}
 
           {/* Price calc feedback */}
           {mode === 'prices' && !isDiscount && price && priceQuantity && Number(priceQuantity) > 0 && (
@@ -700,8 +747,26 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
           {mode === 'prices' && (
               <div className="grid grid-cols-2 gap-3 p-4 bg-blue-50/50 rounded-xl border border-blue-100 animate-in fade-in zoom-in-95 duration-200">
                 <div className="flex items-center justify-between col-span-2 mb-1">
-                  <Label className="font-semibold text-blue-900">Add Price Entry</Label>
-                  <span className="text-[10px] text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded-full uppercase tracking-tighter">Tracking</span>
+                  <Label className="font-semibold text-blue-900">{focusedPriceId && focusedPriceId !== 'new' ? "Edit Price Entry" : "Add Price Entry"}</Label>
+                  <div className="flex items-center gap-2">
+                    {focusedPriceId && focusedPriceId !== 'new' && (
+                      <Button 
+                        type="button" 
+                        variant="ghost" 
+                        size="sm" 
+                        className="h-6 text-xs text-red-600 hover:bg-red-50"
+                        onClick={async () => {
+                          if (confirm("Are you sure you want to delete this price entry?")) {
+                            setLoading(true);
+                            await onSave({ deletedPriceEntryId: focusedPriceId });
+                          }
+                        }}
+                      >
+                         <Trash2 className="w-3.5 h-3.5 mr-1" /> Delete
+                      </Button>
+                    )}
+                    <span className="text-[10px] text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded-full uppercase tracking-tighter">Tracking</span>
+                  </div>
                 </div>
                 <div className="space-y-1.5 col-span-2">
                   <Label className="text-xs text-gray-600">Store / Merchant</Label>
@@ -821,15 +886,17 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                 <option key={u} value={u} />
               ))}
             </datalist>
-            <div className="space-y-2">
-              <Label htmlFor="notes">Notes</Label>
-              <Textarea 
-                id="notes" 
-                value={notes} 
-                onChange={e => setNotes(e.target.value)} 
-                placeholder="e.g. 200g needed for recipe" 
-              />
-            </div>
+            {!restrictedMode && (
+              <div className="space-y-2">
+                <Label htmlFor="notes">Notes</Label>
+                <Textarea 
+                  id="notes" 
+                  value={notes} 
+                  onChange={e => setNotes(e.target.value)} 
+                  placeholder="e.g. 200g needed for recipe" 
+                />
+              </div>
+            )}
           </div>
 
           <Button type="submit" className="w-full mt-6" disabled={loading}>
@@ -837,16 +904,16 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
           </Button>
         </form>
 
-        {mode === 'prices' && item && item.priceHistory && item.priceHistory.length > 0 && (
+        {!restrictedMode && mode === 'prices' && item && item.priceHistory && item.priceHistory.length > 0 && (
           <div className="px-1 pb-4">
               <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Price History ({item.priceHistory.length})</h4>
               
               {item.priceHistory.length > 1 && (
                   <div className="h-32 w-full mb-4 mt-2">
                       <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={[...item.priceHistory].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()).map(e => ({
-                              date: new Date(e.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-                              unitPrice: Number((e.isDiscount && e.dealPrice && e.dealQuantity ? Number(e.dealPrice) / Number(e.dealQuantity) : Number(e.price) / Number(e.quantity)).toFixed(2))
+                          <LineChart data={[...item.priceHistory].sort((a, b) => a.date.localeCompare(b.date)).map(e => ({
+                              date: new Date(`${e.date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+                              unitPrice: Number((e.isDiscount && e.dealPrice && e.dealQuantity ? Number(e.dealPrice) / Number(e.dealQuantity) : Number(e.price) / (Number(e.quantity) || 1)).toFixed(2))
                           }))}>
                               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
                               <XAxis dataKey="date" fontSize={10} tickLine={false} axisLine={false} tickMargin={8} minTickGap={15} />
@@ -860,7 +927,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
 
               <div className="space-y-2 max-h-[150px] overflow-y-auto pr-1">
                   {[...item.priceHistory]
-                      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                      .sort((a, b) => b.date.localeCompare(a.date))
                       .map((entry) => (
                       <div key={entry.id} className="bg-gray-50 border rounded-lg p-2 text-xs flex justify-between items-center gap-2">
                           <div className="flex flex-col gap-0.5">

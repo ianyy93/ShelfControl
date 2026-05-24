@@ -29,6 +29,7 @@ export default function App() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<GroceryItem | undefined>();
   const [focusedEntryId, setFocusedEntryId] = useState<string | null>(null);
+  const [focusedPriceId, setFocusedPriceId] = useState<string | null>(null);
   const [checkingOffItem, setCheckingOffItem] = useState<GroceryItem | undefined>();
 
   const [activeTab, setActiveTab] = useState<'shopping' | 'inventory' | 'search'>('shopping');
@@ -179,10 +180,10 @@ export default function App() {
     return () => unsubscribe();
   }, [user, activeListId]);
 
-  const handleSaveItem = async (data: Partial<GroceryItem> & { newPriceEntry?: Omit<PriceEntry, 'id'>, processQuantity?: number }) => {
+  const handleSaveItem = async (data: Partial<GroceryItem> & { newPriceEntry?: Omit<PriceEntry, 'id'>, processQuantity?: number, editedPriceEntry?: PriceEntry, deletedPriceEntryId?: string }) => {
     if (!user || !activeListId) return;
     console.log("Saving Item with data:", data);
-    const { newPriceEntry, processQuantity, ...updatedFields } = data;
+    const { newPriceEntry, processQuantity, editedPriceEntry, deletedPriceEntryId, ...updatedFields } = data;
     
     try {
       if (editingItem?.id) {
@@ -204,7 +205,16 @@ export default function App() {
             ...newPriceEntry,
             id: Math.random().toString(36).substr(2, 9)
           }) as unknown as PriceEntry[];
+        } else if (editedPriceEntry) {
+          if (editingItem.priceHistory) {
+              updateData.priceHistory = editingItem.priceHistory.map(e => e.id === editedPriceEntry.id ? editedPriceEntry : e);
+          }
+        } else if (deletedPriceEntryId) {
+          if (editingItem.priceHistory) {
+              updateData.priceHistory = editingItem.priceHistory.filter(e => e.id !== deletedPriceEntryId);
+          }
         }
+
         await updateDoc(doc(db, "lists", activeListId, "items", editingItem.id), removeUndefined(updateData));
       } else {
         const existingMatch = items.find(i => i.name.toLowerCase().trim() === updatedFields.name?.toLowerCase().trim());
@@ -899,7 +909,7 @@ export default function App() {
                   </Button>
                 </div>
                 {item.shoppingQuantity > 0 && <span className="text-xs text-blue-600 font-medium">+{item.shoppingQuantity} {item.unit || ""} to buy</span>}
-                <div className="flex gap-1 mt-1 -ml-2">
+                <div className="flex gap-1 mt-1 -mr-2">
                   <Button variant="ghost" size="icon" className="h-10 w-10 text-gray-400 hover:text-blue-600" onClick={(e) => { e.stopPropagation(); setEditingItem(item); setIsDialogOpen(true); }}>
                     <Edit className="w-4 h-4" />
                   </Button>
@@ -921,7 +931,7 @@ export default function App() {
                    <div key={entry.id} className="p-2 flex justify-between items-center hover:bg-gray-100 transition-colors cursor-pointer" onClick={(e) => { e.stopPropagation(); setEditingItem(item); setFocusedEntryId(entry.id); setIsDialogOpen(true); }}>
                      <div className="flex flex-col gap-0.5">
                        <div className="flex items-center gap-1.5 pl-1.5 border-l-2 border-gray-300">
-                           <span className="font-semibold text-gray-700">
+                           <span className="font-semibold text-gray-700 whitespace-nowrap shrink-0">
                              {entry.isOpened && entry.unit === 'pcs' ? 
                                 (entry.amount ? `${entry.quantity} count, ${entry.amount} pcs` : `${entry.quantity} count, 1 pcs`) : 
                                 (entry.amount ? `${entry.quantity} x ${entry.amount} ${entry.unit || item.unit || ''}` : `${entry.quantity} ${entry.unit || item.unit || 'Count'}`)
@@ -952,21 +962,22 @@ export default function App() {
                        {entry.expiryDate && <span className={`pl-2 ${new Date(entry.expiryDate) < new Date() ? "text-red-500 font-medium" : "text-gray-400"}`}>Exp: {entry.expiryDate}</span>}
                        {(entry.dateBought || entry.dateAdded) && <div className="text-[10px] text-gray-400 pl-2">Bought: {entry.dateBought || entry.dateAdded}</div>}
                        {entry.isOpened && (
-                          <span className="text-[10px] text-orange-600 flex items-center gap-0.5 pl-2 mt-0.5">
-                            <span className="font-semibold uppercase text-[9px]">Opened:</span> 
+                          <div className="relative flex items-center pl-2 mt-0.5" onClick={(e) => e.stopPropagation()}>
+                            <span className="text-[10px] text-orange-600">
+                              Opened {entry.openedDate || "yyyy-mm-dd"}
+                            </span>
                             <input 
                               type="date" 
                               value={entry.openedDate || ""} 
                               onChange={(e) => updateEntryOpenedDate(item, entry.id, e.target.value)}
-                              className="bg-transparent border-none p-0 text-[10px] focus:ring-0 w-[85px] h-[18px]"
-                              onClick={(e) => e.stopPropagation()}
+                              className="absolute inset-0 w-[100px] h-full opacity-0 cursor-pointer"
                             />
                             {entry.openedDate && (
-                              <Button variant="ghost" size="icon" className="h-[14px] w-[14px] flex-shrink-0 text-orange-400 hover:text-orange-600 hover:bg-orange-100/50 p-0" onClick={(e) => { e.stopPropagation(); updateEntryOpenedDate(item, entry.id, ""); }}>
+                              <Button variant="ghost" size="icon" className="relative z-10 h-[14px] w-[14px] flex-shrink-0 text-orange-400 hover:text-orange-600 hover:bg-orange-100/50 p-0 ml-1" onClick={(e) => { e.stopPropagation(); updateEntryOpenedDate(item, entry.id, ""); }}>
                                 <X className="w-2.5 h-2.5" />
                               </Button>
                             )}
-                          </span>
+                          </div>
                        )}
                        {entry.tags && entry.tags.length > 0 && (
                          <div className="flex flex-wrap gap-1 pl-2 mt-0.5">
@@ -976,7 +987,7 @@ export default function App() {
                          </div>
                        )}
                      </div>
-                     <div className="flex items-center gap-1">
+                     <div className="flex items-center gap-1 shrink-0 ml-2">
                         <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, -1); }} title="Decrease count">
                            <Minus className="w-3.5 h-3.5" />
                         </Button>
@@ -990,33 +1001,44 @@ export default function App() {
               </div>
             )}
 
-            {expandedItems[item.id!] && item.priceHistory && item.priceHistory.length > 0 && (
+            {expandedItems[item.id!] && (
               <div className="bg-blue-50/30 rounded-lg text-xs mt-3 border border-blue-100" onClick={e => e.stopPropagation()}>
-                <div className="p-2 border-b border-blue-100 font-semibold text-blue-800 uppercase tracking-wider text-[10px]">Price History</div>
+                <div className="p-2 border-b border-blue-100 font-semibold text-blue-800 uppercase tracking-wider text-[10px] flex items-center justify-between bg-blue-50/50 rounded-t-lg">
+                   <span>Price History</span>
+                   <Button variant="ghost" size="icon" className="h-5 w-5 text-blue-600 hover:text-blue-800 hover:bg-blue-100" onClick={(e) => { e.stopPropagation(); setEditingItem(item); setFocusedPriceId('new'); setIsDialogOpen(true); }}>
+                     <Plus className="w-3 h-3" />
+                   </Button>
+                </div>
                 
-                {item.priceHistory.length > 1 && (
-                  <div className="h-32 w-full p-2 pb-0">
-                      <ResponsiveContainer width="100%" height="100%">
-                          <RechartsLineChart data={[...item.priceHistory].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()).map(e => ({
-                              date: new Date(e.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-                              unitPrice: Number((e.isDiscount && e.dealPrice && e.dealQuantity ? Number(e.dealPrice) / Number(e.dealQuantity) : Number(e.price) / Number(e.quantity)).toFixed(2))
-                          }))}>
-                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-                              <XAxis dataKey="date" fontSize={10} tickLine={false} axisLine={false} tickMargin={8} minTickGap={15} />
-                              <YAxis width={30} fontSize={10} tickLine={false} axisLine={false} tickFormatter={(value) => `$${value}`} />
-                              <Tooltip contentStyle={{ borderRadius: '8px', fontSize: '12px', padding: '4px 8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} formatter={(value: number) => [`$${value.toFixed(2)}`, 'Unit Price']} labelStyle={{ color: '#6B7280', marginBottom: '2px' }} />
-                              <Line type="monotone" dataKey="unitPrice" stroke="#3B82F6" strokeWidth={2} dot={{ r: 3, fill: "#3B82F6", strokeWidth: 0 }} activeDot={{ r: 5 }} />
-                          </RechartsLineChart>
-                      </ResponsiveContainer>
-                  </div>
-                )}
+                {(!item.priceHistory || item.priceHistory.length === 0) ? (
+                   <div className="p-3 text-center text-gray-500 text-[10px] italic">
+                     No price history available.
+                   </div>
+                ) : (
+                  <>
+                    {item.priceHistory.length > 1 && (
+                      <div className="h-32 w-full p-2 pb-0">
+                          <ResponsiveContainer width="100%" height="100%">
+                              <RechartsLineChart data={[...item.priceHistory].sort((a, b) => a.date.localeCompare(b.date)).map(e => ({
+                                  date: new Date(`${e.date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+                                  unitPrice: Number((e.isDiscount && e.dealPrice && e.dealQuantity ? Number(e.dealPrice) / Number(e.dealQuantity) : Number(e.price) / (Number(e.quantity) || 1)).toFixed(2))
+                              }))}>
+                                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                                  <XAxis dataKey="date" fontSize={10} tickLine={false} axisLine={false} tickMargin={8} minTickGap={15} />
+                                  <YAxis width={30} fontSize={10} tickLine={false} axisLine={false} tickFormatter={(value) => `$${value}`} />
+                                  <Tooltip contentStyle={{ borderRadius: '8px', fontSize: '12px', padding: '4px 8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} formatter={(value: number) => [`$${value.toFixed(2)}`, 'Unit Price']} labelStyle={{ color: '#6B7280', marginBottom: '2px' }} />
+                                  <Line type="monotone" dataKey="unitPrice" stroke="#3B82F6" strokeWidth={2} dot={{ r: 3, fill: "#3B82F6", strokeWidth: 0 }} activeDot={{ r: 5 }} />
+                              </RechartsLineChart>
+                          </ResponsiveContainer>
+                      </div>
+                    )}
 
-                <div className="divide-y divide-blue-50 max-h-[120px] overflow-y-auto">
-                    {[...item.priceHistory].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(entry => (
-                       <div key={entry.id} className="p-2 flex justify-between items-center bg-white hover:bg-gray-50 transition-colors">
-                           <div className="flex flex-col gap-0.5">
-                               <span className="font-semibold text-gray-700">{entry.store || "Unknown Store"}</span>
-                               <span className="text-[10px] text-gray-500">{entry.date}</span>
+                    <div className="divide-y divide-blue-50 max-h-[120px] overflow-y-auto">
+                        {[...item.priceHistory].sort((a, b) => b.date.localeCompare(a.date)).map(entry => (
+                           <div key={entry.id} className="p-2 flex justify-between items-center bg-white hover:bg-gray-50 transition-colors cursor-pointer" onClick={(e) => { e.stopPropagation(); setEditingItem(item); setFocusedPriceId(entry.id); setIsDialogOpen(true); }}>
+                               <div className="flex flex-col gap-0.5">
+                                   <span className="font-semibold text-gray-700">{entry.store || "Unknown Store"}</span>
+                                   <span className="text-[10px] text-gray-500">{entry.date}</span>
                            </div>
                            <div className="flex flex-col items-end gap-0.5">
                                {entry.isDiscount && entry.dealPrice && entry.dealQuantity ? (
@@ -1034,8 +1056,10 @@ export default function App() {
                        </div>
                     ))}
                 </div>
-              </div>
-            )}
+                </>
+              )}
+            </div>
+          )}
 
             {expandedItems[item.id!] && item.notes && <div className="text-xs text-gray-500 mt-1 line-clamp-2 italic border-t pt-2" title={item.notes}>{item.notes}</div>}
           </div>
@@ -1413,7 +1437,7 @@ export default function App() {
                          <div key={entry.id} className="flex items-center justify-between p-2 bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer rounded-lg border border-gray-100 group" onClick={(e) => { e.stopPropagation(); setEditingItem(item); setFocusedEntryId(entry.id); setIsDialogOpen(true); }}>
                            <div className="min-w-0 flex-1">
                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                               <span className="text-[11px] font-bold text-gray-800">
+                               <span className="text-[11px] font-bold text-gray-800 whitespace-nowrap shrink-0">
                                    {entry.isOpened && entry.unit === 'pcs' ? 
                                       (entry.amount ? `${entry.quantity} count, ${entry.amount} pcs` : `${entry.quantity} count, 1 pcs`) : 
                                       (entry.amount ? `${entry.quantity} x ${entry.amount} ${entry.unit || item.unit || ''}` : `${entry.quantity} ${entry.unit || item.unit || 'Count'}`)
@@ -1447,20 +1471,23 @@ export default function App() {
                                  </span>
                                )}
                                {entry.isOpened && (
-                                 <span className="text-[10px] text-orange-600 flex items-center gap-0.5">
-                                   <span className="font-semibold uppercase text-[9px]">Opened:</span> 
+                                 <div className="relative flex items-center">
+                                   <span className="text-[10px] text-orange-600">
+                                     Opened {entry.openedDate || "yyyy-mm-dd"}
+                                   </span>
                                    <input 
                                      type="date" 
                                      value={entry.openedDate || ""} 
                                      onChange={(e) => updateEntryOpenedDate(item, entry.id, e.target.value)}
-                                     className="bg-transparent border-none p-0 text-[10px] focus:ring-0 w-[85px] h-[18px]"
+                                     className="absolute inset-0 w-[100px] h-full opacity-0 cursor-pointer"
+                                     onClick={(e) => e.stopPropagation()}
                                    />
                                    {entry.openedDate && (
-                                     <Button variant="ghost" size="icon" className="h-[14px] w-[14px] ml-0.5 text-orange-400 hover:text-orange-600 hover:bg-orange-100/50 p-0" onClick={(e) => { e.stopPropagation(); updateEntryOpenedDate(item, entry.id, ""); }}>
+                                     <Button variant="ghost" size="icon" className="relative z-10 h-[14px] w-[14px] flex-shrink-0 text-orange-400 hover:text-orange-600 hover:bg-orange-100/50 p-0 ml-1" onClick={(e) => { e.stopPropagation(); updateEntryOpenedDate(item, entry.id, ""); }}>
                                        <X className="w-2.5 h-2.5" />
                                      </Button>
                                    )}
-                                 </span>
+                                 </div>
                                )}
                                {entry.tags && entry.tags.length > 0 && (
                                  <div className="flex gap-1">
@@ -1471,7 +1498,7 @@ export default function App() {
                                )}
                              </div>
                            </div>
-                           <div className="flex items-center gap-1">
+                           <div className="flex items-center gap-1 shrink-0 ml-2">
                               <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, -1); }} title="Decrease count">
                                  <Minus className="w-3.5 h-3.5" />
                               </Button>
@@ -1623,7 +1650,7 @@ export default function App() {
       <main className="flex-1 max-w-5xl w-full mx-auto px-2 sm:px-6 lg:px-8 pb-8 pt-0">
         <Tabs value={activeTab} onValueChange={(v) => { window.scrollTo({ top: 0 }); setActiveTab(v as 'shopping' | 'inventory' | 'search'); }} className="w-full">
           <div className="sticky top-14 z-20 bg-gray-50 pt-4 pb-2 mb-4 -mx-2 px-2 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 border-b border-gray-200/50">
-            <TabsList className="grid w-full lg:w-[898px] max-w-full grid-cols-3 bg-gray-200/50 rounded-xl h-auto min-h-[44px] sm:min-h-[42px] p-1 gap-1">
+            <TabsList className="grid w-full lg:w-[600px] max-w-full grid-cols-2 bg-gray-200/50 rounded-xl h-auto min-h-[44px] sm:min-h-[42px] p-1 gap-1 mx-auto">
             <TabsTrigger value="shopping" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm py-2 px-1 flex-col sm:flex-row h-auto min-h-full">
               <ShoppingCart className="w-4 h-4 mb-1 sm:mb-0 sm:mr-2 shrink-0" />
               <span className="text-[10px] sm:text-sm leading-tight text-center sm:text-left break-words max-w-full">Shopping List</span>
@@ -1631,11 +1658,7 @@ export default function App() {
             </TabsTrigger>
             <TabsTrigger value="inventory" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm py-2 px-1 flex-col sm:flex-row h-auto min-h-full">
               <Box className="w-4 h-4 mb-1 sm:mb-0 sm:mr-2 shrink-0" />
-              <span className="text-[10px] sm:text-sm leading-tight text-center sm:text-left break-words max-w-full">Pantry Inventory</span>
-            </TabsTrigger>
-            <TabsTrigger value="search" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm py-2 px-1 flex-col sm:flex-row h-auto min-h-full">
-              <LineChart className="w-4 h-4 mb-1 sm:mb-0 sm:mr-2 shrink-0" />
-              <span className="text-[10px] sm:text-sm leading-tight text-center sm:text-left break-words max-w-full">Item Search</span>
+              <span className="text-[10px] sm:text-sm leading-tight text-center sm:text-left break-words max-w-full">Inventory & Search</span>
             </TabsTrigger>
           </TabsList>
           </div>
@@ -1686,10 +1709,8 @@ export default function App() {
             )}
 
             {renderControls()}
-            {renderInventoryItems()}
-          </TabsContent>
-          <TabsContent value="search" className="focus-visible:outline-none space-y-4 pt-2">
-            <div className="relative">
+            
+            <div className="relative my-4">
               <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
               <Input 
                 type="text" 
@@ -1699,7 +1720,15 @@ export default function App() {
                 className="pl-10 h-12 text-lg shadow-sm"
               />
             </div>
-            {renderInventoryItems(searchQuery)}
+
+            {searchQuery.trim() !== "" ? (
+               <div className="mt-4">
+                 <h3 className="font-semibold text-gray-700 mb-3">Search Results</h3>
+                 {renderInventoryItems(searchQuery)}
+               </div>
+            ) : (
+               renderInventoryItems()
+            )}
           </TabsContent>
         </Tabs>
       </main>
@@ -1710,6 +1739,7 @@ export default function App() {
           setIsDialogOpen(open);
           if (!open) {
             setFocusedEntryId(null);
+            setFocusedPriceId(null);
           }
         }}
         onSave={handleSaveItem} 
@@ -1719,6 +1749,8 @@ export default function App() {
         title={editingItem ? "Edit Item" : "Add New Item"}
         defaultMode={activeTab === 'shopping' ? 'shopping' : 'inventory'}
         focusedEntryId={focusedEntryId}
+        focusedPriceId={focusedPriceId}
+        restrictedMode={!!focusedEntryId || !!focusedPriceId}
       />
 
       <MoveEntryDialog 
