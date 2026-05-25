@@ -928,16 +928,16 @@ export default function App() {
                  {item.inventoryEntries
                     .filter(entry => effectiveGroupBy !== 'location' || (entry.location || 'Unassigned') === group.name || (!entry.location && group.name === 'Unassigned'))
                     .map(entry => (
-                   <div key={entry.id} className="p-2 flex justify-between items-center hover:bg-gray-100 transition-colors cursor-pointer" onClick={(e) => { e.stopPropagation(); setEditingItem(item); setFocusedEntryId(entry.id); setIsDialogOpen(true); }}>
-                     <div className="flex flex-col gap-0.5">
-                       <div className="flex items-center gap-1.5 pl-1.5 border-l-2 border-gray-300">
-                           <span className="font-semibold text-gray-700 whitespace-nowrap shrink-0">
-                             {entry.isOpened && entry.unit === 'pcs' ? 
-                                (entry.amount ? `${entry.quantity} count, ${entry.amount} pcs` : `${entry.quantity} count, 1 pcs`) : 
-                                (entry.amount ? `${entry.quantity} x ${entry.amount} ${entry.unit || item.unit || ''}` : `${entry.quantity} ${entry.unit || item.unit || 'Count'}`)
-                             }
-                           </span>
-                           <div className="relative inline-flex items-center ml-1">
+                    <div key={entry.id} className="p-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-gray-100 transition-colors cursor-pointer" onClick={(e) => { e.stopPropagation(); setEditingItem(item); setFocusedEntryId(entry.id); setIsDialogOpen(true); }}>
+                      <div className="flex flex-col gap-0.5 min-w-0 w-full sm:w-auto flex-1">
+                        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 pl-1.5 border-l-2 border-gray-300">
+                            <span className="font-semibold text-gray-700">
+                              {entry.isOpened && entry.unit === 'pcs' ? 
+                                 (entry.amount ? `${entry.quantity} count, ${entry.amount} pcs` : `${entry.quantity} count, 1 pcs`) : 
+                                 (entry.amount ? `${entry.quantity} x ${entry.amount} ${entry.unit || item.unit || ''}` : `${entry.quantity} ${entry.unit || item.unit || 'Count'}`)
+                              }
+                            </span>
+                            <div className="relative inline-flex items-center ml-1">
                              <select 
                                  value={entry.location || ''} 
                                  onChange={(e) => handleMoveEntry(item, entry.id, e.target.value)} 
@@ -987,7 +987,7 @@ export default function App() {
                          </div>
                        )}
                      </div>
-                     <div className="flex items-center gap-1 shrink-0 ml-2">
+                     <div className="flex items-center gap-1 shrink-0 self-end sm:self-auto sm:ml-2">
                         <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, -1); }} title="Decrease count">
                            <Minus className="w-3.5 h-3.5" />
                         </Button>
@@ -1434,10 +1434,10 @@ export default function App() {
                        {(item.inventoryEntries || [])
                           .filter(entry => groupBy !== 'location' || (entry.location || 'Unassigned') === group.name || (!entry.location && group.name === 'Unassigned'))
                           .map(entry => (
-                         <div key={entry.id} className="flex items-center justify-between p-2 bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer rounded-lg border border-gray-100 group" onClick={(e) => { e.stopPropagation(); setEditingItem(item); setFocusedEntryId(entry.id); setIsDialogOpen(true); }}>
-                           <div className="min-w-0 flex-1">
+                         <div key={entry.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-2 gap-2 bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer rounded-lg border border-gray-100 group" onClick={(e) => { e.stopPropagation(); setEditingItem(item); setFocusedEntryId(entry.id); setIsDialogOpen(true); }}>
+                           <div className="min-w-0 w-full sm:w-auto flex-1">
                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                               <span className="text-[11px] font-bold text-gray-800 whitespace-nowrap shrink-0">
+                               <span className="text-[11px] font-bold text-gray-800">
                                    {entry.isOpened && entry.unit === 'pcs' ? 
                                       (entry.amount ? `${entry.quantity} count, ${entry.amount} pcs` : `${entry.quantity} count, 1 pcs`) : 
                                       (entry.amount ? `${entry.quantity} x ${entry.amount} ${entry.unit || item.unit || ''}` : `${entry.quantity} ${entry.unit || item.unit || 'Count'}`)
@@ -1498,7 +1498,7 @@ export default function App() {
                                )}
                              </div>
                            </div>
-                           <div className="flex items-center gap-1 shrink-0 ml-2">
+                           <div className="flex items-center gap-1 shrink-0 self-end sm:self-auto sm:ml-2">
                               <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, -1); }} title="Decrease count">
                                  <Minus className="w-3.5 h-3.5" />
                               </Button>
