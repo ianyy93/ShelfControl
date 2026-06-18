@@ -2,11 +2,11 @@ import { motion, AnimatePresence } from "motion/react";
 import React, { useEffect, useState, useMemo, useRef } from "react";
 import { auth, db, signIn, signOut, handleFirestoreError } from "./lib/firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
-import { collection, onSnapshot, query, addDoc, serverTimestamp, doc, deleteDoc, updateDoc, where, getDoc, arrayUnion } from "firebase/firestore";
+import { collection, onSnapshot, query, addDoc, serverTimestamp, doc, deleteDoc, updateDoc, where, getDoc, arrayUnion, setDoc } from "firebase/firestore";
 import { GroceryItem, GroceryList, CATEGORIES, InventoryEntry, PRESET_LOCATIONS, PriceEntry } from "./types";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
-import { Plus, LogOut, Trash2, Edit, ShoppingCart, Check, Minus, Users, Link as LinkIcon, LineChart, Box, ChevronRight, ChevronDown, EyeOff, X, Search } from "lucide-react";
+import { Plus, LogOut, Trash2, Edit, ShoppingCart, Check, Minus, Users, Link as LinkIcon, LineChart, Box, ChevronRight, ChevronDown, EyeOff, X, Search, RotateCcw } from "lucide-react";
 import { GroceriesIcon } from "./components/GroceriesIcon";
 import { MoveEntryDialog } from "./components/MoveEntryDialog";
 import { removeUndefined } from "./lib/utils";
@@ -31,6 +31,42 @@ export default function App() {
   const [focusedEntryId, setFocusedEntryId] = useState<string | null>(null);
   const [focusedPriceId, setFocusedPriceId] = useState<string | null>(null);
   const [checkingOffItem, setCheckingOffItem] = useState<GroceryItem | undefined>();
+
+  const [lastAction, setLastAction] = useState<{
+    type: 'delete' | 'update' | 'create';
+    itemId: string;
+    itemData: GroceryItem;
+    description: string;
+  } | null>(null);
+
+  const setUndoableAction = (action: {
+    type: 'delete' | 'update' | 'create';
+    itemId: string;
+    itemData: GroceryItem;
+    description: string;
+  } | null) => {
+    setLastAction(action);
+  };
+
+  const handleUndo = async () => {
+    if (!lastAction || !activeListId) return;
+    const action = lastAction;
+    setUndoableAction(null);
+    try {
+      if (action.type === 'delete') {
+        const { id, ...dataToRestore } = action.itemData;
+        // Clean up any undefined fields to be safe before setting
+        await setDoc(doc(db, "lists", activeListId, "items", action.itemId), removeUndefined(dataToRestore));
+      } else if (action.type === 'update') {
+        const { id, ...dataToRestore } = action.itemData;
+        await setDoc(doc(db, "lists", activeListId, "items", action.itemId), removeUndefined(dataToRestore));
+      } else if (action.type === 'create') {
+        await deleteDoc(doc(db, "lists", activeListId, "items", action.itemId));
+      }
+    } catch (error) {
+      console.error("Failed to undo action:", error);
+    }
+  };
 
   const [activeTab, setActiveTab] = useState<'shopping' | 'inventory' | 'search'>('shopping');
   const [searchQuery, setSearchQuery] = useState("");
@@ -187,6 +223,7 @@ export default function App() {
     
     try {
       if (editingItem?.id) {
+        const originalItem = items.find(i => i.id === editingItem.id);
         const updateData: Partial<GroceryItem> = {
           ...updatedFields,
           updatedAt: serverTimestamp()
@@ -216,6 +253,14 @@ export default function App() {
         }
 
         await updateDoc(doc(db, "lists", activeListId, "items", editingItem.id), removeUndefined(updateData));
+        if (originalItem) {
+          setUndoableAction({
+            type: 'update',
+            itemId: editingItem.id,
+            itemData: originalItem,
+            description: `Saved "${editingItem.name}"`
+          });
+        }
       } else {
         const existingMatch = items.find(i => i.name.toLowerCase().trim() === updatedFields.name?.toLowerCase().trim());
         if (existingMatch && existingMatch.id) {
@@ -242,6 +287,12 @@ export default function App() {
            }
 
            await updateDoc(doc(db, "lists", activeListId, "items", existingMatch.id), removeUndefined(updateData));
+           setUndoableAction({
+             type: 'update',
+             itemId: existingMatch.id,
+             itemData: existingMatch,
+             description: `Merged "${updatedFields.name}"`
+           });
         } else {
            const newItem: Partial<GroceryItem> = {
              ...updatedFields,
@@ -258,7 +309,13 @@ export default function App() {
              }];
            }
 
-           await addDoc(collection(db, "lists", activeListId, "items"), removeUndefined(newItem) as GroceryItem);
+           const docRef = await addDoc(collection(db, "lists", activeListId, "items"), removeUndefined(newItem) as GroceryItem);
+           setUndoableAction({
+             type: 'create',
+             itemId: docRef.id,
+             itemData: { ...newItem, id: docRef.id } as GroceryItem,
+             description: `Added "${newItem.name}"`
+           });
         }
       }
       setIsDialogOpen(false);
@@ -271,8 +328,16 @@ export default function App() {
 
   const handleDelete = async (itemId: string) => {
     if (!user || !activeListId) return;
+    const originalItem = items.find(i => i.id === itemId);
+    if (!originalItem) return;
     try {
       await deleteDoc(doc(db, "lists", activeListId, "items", itemId));
+      setUndoableAction({
+        type: 'delete',
+        itemId,
+        itemData: originalItem,
+        description: `Deleted "${originalItem.name}"`
+      });
     } catch (error) {
       console.error("Error deleting item:", error);
       handleFirestoreError(error, 'delete', `lists/${activeListId}/items/${itemId}`);
@@ -281,6 +346,7 @@ export default function App() {
 
   const updateQuantities = async (item: GroceryItem, invDelta: number, shopDelta: number, locationTrigger?: string) => {
     if (!user || !activeListId || !item.id) return;
+    const itemBefore = JSON.parse(JSON.stringify(item));
     const newInv = Math.max(0, item.inventoryQuantity + invDelta);
     const newShop = Math.max(0, item.shoppingQuantity + shopDelta);
     
@@ -354,6 +420,12 @@ export default function App() {
 
     try {
       await updateDoc(doc(db, "lists", activeListId, "items", item.id), removeUndefined(updateData));
+      setUndoableAction({
+        type: 'update',
+        itemId: item.id,
+        itemData: itemBefore,
+        description: `Updated quantity of "${item.name}"`
+      });
     } catch (error) {
       console.error("Error updating quantities:", error);
       handleFirestoreError(error, 'update', `lists/${activeListId}/items/${item.id}`);
@@ -362,6 +434,9 @@ export default function App() {
 
   const handleUpdateItem = async (itemId: string, fields: Partial<GroceryItem>) => {
     if (!user || !activeListId) return;
+    const item = items.find(i => i.id === itemId);
+    if (!item) return;
+    const itemBefore = JSON.parse(JSON.stringify(item));
     try {
       const updateData: any = {
         ...fields,
@@ -373,6 +448,12 @@ export default function App() {
       }
 
       await updateDoc(doc(db, "lists", activeListId, "items", itemId), removeUndefined(updateData));
+      setUndoableAction({
+        type: 'update',
+        itemId,
+        itemData: itemBefore,
+        description: `Updated "${itemBefore.name}"`
+      });
     } catch (error) {
       console.error("Error updating item:", error);
       handleFirestoreError(error, 'update', `lists/${activeListId}/items/${itemId}`);
@@ -385,6 +466,7 @@ export default function App() {
 
   const confirmCheckOff = async (item: GroceryItem, priceEntry: Omit<PriceEntry, 'id'> | null) => {
     if (!user || !activeListId || !item.id) return;
+    const itemBefore = JSON.parse(JSON.stringify(item));
     try {
       if (item.shoppingQuantity > 0) {
         const updateData: Record<string, unknown> = {
@@ -401,6 +483,12 @@ export default function App() {
         }
 
         await updateDoc(doc(db, "lists", activeListId, "items", item.id), removeUndefined(updateData));
+        setUndoableAction({
+          type: 'update',
+          itemId: item.id,
+          itemData: itemBefore,
+          description: `Checked off "${item.name}"`
+        });
       }
       setCheckingOffItem(undefined);
     } catch (error) {
@@ -427,6 +515,7 @@ export default function App() {
 
   const executeMoveEntry = async (item: GroceryItem, entryId: string, newLocation: string, quantityToMove: number) => {
     if (!user || !activeListId || !item.id) return;
+    const itemBefore = JSON.parse(JSON.stringify(item));
     
     let isModified = false;
     const newEntries: InventoryEntry[] = [];
@@ -456,6 +545,12 @@ export default function App() {
         locations: newLocs,
         updatedAt: serverTimestamp()
       }));
+      setUndoableAction({
+        type: 'update',
+        itemId: item.id,
+        itemData: itemBefore,
+        description: `Moved "${item.name}" to ${newLocation || 'Unassigned'}`
+      });
     } catch (error) {
       console.error("Error moving entry:", error);
       handleFirestoreError(error, 'update', `lists/${activeListId}/items/${item.id}`);
@@ -464,6 +559,7 @@ export default function App() {
 
   const updateEntryQuantity = async (item: GroceryItem, entryId: string, delta: number) => {
     if (!user || !activeListId || !item.id) return;
+    const itemBefore = JSON.parse(JSON.stringify(item));
     
     let newEntries: InventoryEntry[] = [];
     let isModified = false;
@@ -502,6 +598,12 @@ export default function App() {
         locations: newLocs,
         updatedAt: serverTimestamp()
       }));
+      setUndoableAction({
+        type: 'update',
+        itemId: item.id,
+        itemData: itemBefore,
+        description: `Updated entry quantity of "${item.name}"`
+      });
     } catch (error) {
       console.error("Error updating entry quantity:", error);
       handleFirestoreError(error, 'update', `lists/${activeListId}/items/${item.id}`);
@@ -510,6 +612,7 @@ export default function App() {
 
   const toggleEntryStatus = async (item: GroceryItem, entryId: string) => {
     if (!user || !activeListId || !item.id) return;
+    const itemBefore = JSON.parse(JSON.stringify(item));
     
     const newEntries: InventoryEntry[] = [];
     let isModified = false;
@@ -553,6 +656,12 @@ export default function App() {
         inventoryEntries: newEntries,
         updatedAt: serverTimestamp()
       }));
+      setUndoableAction({
+        type: 'update',
+        itemId: item.id,
+        itemData: itemBefore,
+        description: `Toggled state of "${item.name}"`
+      });
     } catch (error) {
       console.error("Error toggling status:", error);
       handleFirestoreError(error, 'update', `lists/${activeListId}/items/${item.id}`);
@@ -561,6 +670,7 @@ export default function App() {
 
   const updateEntryOpenedDate = async (item: GroceryItem, entryId: string, date: string) => {
     if (!user || !activeListId || !item.id) return;
+    const itemBefore = JSON.parse(JSON.stringify(item));
     const newEntries = (item.inventoryEntries || []).map(e => {
       if (e.id === entryId) {
         return { ...e, openedDate: date };
@@ -573,6 +683,12 @@ export default function App() {
         inventoryEntries: newEntries,
         updatedAt: serverTimestamp()
       }));
+      setUndoableAction({
+        type: 'update',
+        itemId: item.id,
+        itemData: itemBefore,
+        description: `Updated opened date of "${item.name}"`
+      });
     } catch (error) {
       console.error("Error updating opened date:", error);
       handleFirestoreError(error, 'update', `lists/${activeListId}/items/${item.id}`);
@@ -1637,6 +1753,19 @@ export default function App() {
             </div>
           </div>
           <div className="flex items-center gap-1.5 sm:gap-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleUndo}
+              disabled={!lastAction}
+              className={`h-8 gap-1.5 text-xs font-semibold shadow-sm transition-all ${lastAction ? 'text-blue-700 border-blue-200 bg-blue-50/80 hover:bg-blue-100' : 'text-gray-400 border-gray-200 bg-gray-50/50'}`}
+              title={lastAction ? `Undo last action: ${lastAction.description}` : 'Nothing to undo'}
+              id="header-undo-btn"
+            >
+              <RotateCcw className={`w-3.5 h-3.5 ${lastAction ? 'text-blue-600 animate-pulse' : 'text-gray-400'}`} />
+              <span className="hidden sm:inline">Undo{lastAction ? `: ${lastAction.description.substring(0, 15)}${lastAction.description.length > 15 ? '...' : ''}` : ''}</span>
+              <span className="sm:hidden">Undo</span>
+            </Button>
             <Button variant="default" size="icon" className="h-8 w-8" onClick={() => { setEditingItem(undefined); setIsDialogOpen(true); }} title="Add Item">
               <Plus className="w-4 h-4" />
             </Button>
@@ -1772,6 +1901,49 @@ export default function App() {
         item={checkingOffItem}
         onConfirm={confirmCheckOff}
       />
+
+      <AnimatePresence>
+        {lastAction && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            className="fixed bottom-6 right-6 z-50 flex items-center justify-between gap-4 bg-gray-900 text-white px-4 py-3 rounded-xl shadow-xl border border-gray-800"
+            id="undo-toast"
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center w-8 h-8 rounded-full bg-blue-950/50 shrink-0">
+                <RotateCcw className="w-4 h-4 text-blue-400" />
+              </div>
+              <div className="min-w-0 pr-2">
+                <p className="text-xs font-semibold truncate max-w-[180px] sm:max-w-[240px]">{lastAction.description}</p>
+                <p className="text-[10px] text-gray-400">Persistent undo helper</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1 shrink-0 pl-2 border-l border-gray-800">
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={handleUndo} 
+                className="h-8 text-xs font-bold text-blue-400 hover:text-blue-300 hover:bg-gray-800 px-3 cursor-pointer"
+                id="undo-toast-btn"
+              >
+                Undo
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setUndoableAction(null)}
+                className="h-8 w-8 text-gray-400 hover:text-white hover:bg-gray-800 cursor-pointer"
+                id="undo-toast-close"
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <datalist id="units-list">
         <option value="g" />
         <option value="kg" />
