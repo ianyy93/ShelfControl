@@ -3,7 +3,7 @@ import React, { useEffect, useState, useMemo, useRef } from "react";
 import { auth, db, signIn, signOut, handleFirestoreError } from "./lib/firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { collection, onSnapshot, query, addDoc, serverTimestamp, doc, deleteDoc, updateDoc, where, getDoc, arrayUnion, setDoc } from "firebase/firestore";
-import { GroceryItem, GroceryList, CATEGORIES, InventoryEntry, PRESET_LOCATIONS, PriceEntry } from "./types";
+import { GroceryItem, GroceryList, CATEGORIES, InventoryEntry, PRESET_LOCATIONS, PriceEntry, Category } from "./types";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Plus, LogOut, Trash2, Edit, ShoppingCart, Check, Minus, Users, Link as LinkIcon, LineChart, Box, ChevronRight, ChevronDown, EyeOff, X, Search, RotateCcw } from "lucide-react";
@@ -13,6 +13,8 @@ import { removeUndefined } from "./lib/utils";
 import { ItemDialog } from "./components/ItemDialog";
 import { CheckOffDialog } from "./components/CheckOffDialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
+import { ReceiptScanDialog } from "./components/ReceiptScanDialog";
+import { Sparkles, Receipt } from "lucide-react";
 import { Badge } from "./components/ui/badge";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "./components/ui/accordion";
 import { LineChart as RechartsLineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
@@ -27,6 +29,7 @@ export default function App() {
   const [items, setItems] = useState<GroceryItem[]>([]);
   
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isScanDialogOpen, setIsScanDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<GroceryItem | undefined>();
   const [focusedEntryId, setFocusedEntryId] = useState<string | null>(null);
   const [focusedPriceId, setFocusedPriceId] = useState<string | null>(null);
@@ -171,7 +174,7 @@ export default function App() {
         const params = new URLSearchParams(window.location.search);
         if (!params.get('join')) {
           addDoc(collection(db, "lists"), {
-            name: "My Household",
+            name: "My List",
             ownerId: user.uid,
             members: [user.uid],
             createdAt: serverTimestamp(),
@@ -324,6 +327,93 @@ export default function App() {
       console.error("Error saving item:", error);
       handleFirestoreError(error, editingItem?.id ? 'update' : 'create', `lists/${activeListId}/items`);
     }
+  };
+
+  const handleImportReceipt = async (scannedItems: Array<{
+    name: string;
+    quantity: number;
+    category: Category;
+    unit: string;
+    price?: number;
+    store?: string;
+    dateBought?: string;
+  }>) => {
+    if (!user || !activeListId) return;
+
+    const promises = scannedItems.map(async (scanned) => {
+      const trimmedName = scanned.name.trim();
+      const existingMatch = items.find(i => i.name.toLowerCase().trim() === trimmedName.toLowerCase());
+
+      const todayStr = new Date().toISOString().split('T')[0];
+      const purchaseDate = scanned.dateBought || todayStr;
+
+      const entryId = Math.random().toString(36).substr(2, 9);
+      const newEntry: InventoryEntry = {
+        id: entryId,
+        location: "", // Unassigned location as requested!
+        quantity: scanned.quantity,
+        unit: scanned.unit || "",
+        dateBought: purchaseDate,
+        dateAdded: todayStr
+      };
+
+      if (existingMatch && existingMatch.id) {
+        const updatedEntries = [...(existingMatch.inventoryEntries || []), newEntry];
+        const updatedLocations = Array.from(new Set(updatedEntries.map(e => e.location).filter(Boolean)));
+        
+        const updateData: any = {
+          inventoryQuantity: (existingMatch.inventoryQuantity || 0) + scanned.quantity,
+          inventoryEntries: updatedEntries,
+          locations: updatedLocations,
+          updatedAt: serverTimestamp()
+        };
+
+        if (scanned.price !== undefined && scanned.store) {
+          const newPriceEntry: PriceEntry = {
+            id: Math.random().toString(36).substr(2, 9),
+            store: scanned.store,
+            date: purchaseDate,
+            price: scanned.price,
+            quantity: scanned.quantity,
+            unitStr: scanned.unit || ""
+          };
+          updateData.priceHistory = arrayUnion(newPriceEntry);
+        }
+
+        await updateDoc(doc(db, "lists", activeListId, "items", existingMatch.id), removeUndefined(updateData));
+      } else {
+        const newItem: Partial<GroceryItem> = {
+          name: trimmedName,
+          category: scanned.category,
+          inventoryQuantity: scanned.quantity,
+          shoppingQuantity: 0,
+          inventoryEntries: [newEntry],
+          locations: [],
+          location: "",
+          unit: scanned.unit || "",
+          notes: `Imported via Gemini Receipt Scan on ${purchaseDate}`,
+          listId: activeListId,
+          creatorId: user.uid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        };
+
+        if (scanned.price !== undefined && scanned.store) {
+          newItem.priceHistory = [{
+            id: Math.random().toString(36).substr(2, 9),
+            store: scanned.store,
+            date: purchaseDate,
+            price: scanned.price,
+            quantity: scanned.quantity,
+            unitStr: scanned.unit || ""
+          }];
+        }
+
+        await addDoc(collection(db, "lists", activeListId, "items"), removeUndefined(newItem) as GroceryItem);
+      }
+    });
+
+    await Promise.all(promises);
   };
 
   const handleDelete = async (itemId: string) => {
@@ -947,6 +1037,12 @@ export default function App() {
     } else if (effectiveGroupBy === 'location') {
       const g: Record<string, GroceryItem[]> = {};
       filteredItems.forEach(item => {
+        if (item.inventoryQuantity === 0) {
+          if (!g['Out of Stock']) g['Out of Stock'] = [];
+          g['Out of Stock'].push(item);
+          return;
+        }
+        
         const itemLocs = item.locations || [];
         if (item.location && !itemLocs.includes(item.location)) itemLocs.push(item.location);
         
@@ -960,7 +1056,13 @@ export default function App() {
           });
         }
       });
-      groups = Object.keys(g).sort().map(k => ({ name: k, items: g[k] }));
+      groups = Object.keys(g).sort((a, b) => {
+        if (a === 'Out of Stock') return 1;
+        if (b === 'Out of Stock') return -1;
+        if (a === 'Unassigned') return 1;
+        if (b === 'Unassigned') return -1;
+        return a.localeCompare(b);
+      }).map(k => ({ name: k, items: g[k] }));
     } else {
       groups = [{ name: 'Search Results', items: filteredItems }];
     }
@@ -972,11 +1074,16 @@ export default function App() {
           let displayInventoryQuantity = item.inventoryQuantity;
           let relevantEntries = item.inventoryEntries || [];
           if (effectiveGroupBy === 'location') {
-              relevantEntries = relevantEntries.filter(e => (e.location || 'Unassigned') === group.name || (!e.location && group.name === 'Unassigned'));
-              displayInventoryQuantity = relevantEntries.reduce((sum, e) => sum + e.quantity, 0);
-              // Special case if there are no entries at all
-              if (!item.inventoryEntries || item.inventoryEntries.length === 0) {
-                  displayInventoryQuantity = item.inventoryQuantity;
+              if (group.name === 'Out of Stock') {
+                  relevantEntries = [];
+                  displayInventoryQuantity = 0;
+              } else {
+                  relevantEntries = relevantEntries.filter(e => (e.location || 'Unassigned') === group.name || (!e.location && group.name === 'Unassigned'));
+                  displayInventoryQuantity = relevantEntries.reduce((sum, e) => sum + e.quantity, 0);
+                  // Special case if there are no entries at all
+                  if (!item.inventoryEntries || item.inventoryEntries.length === 0) {
+                      displayInventoryQuantity = item.inventoryQuantity;
+                  }
               }
           }
           
@@ -1728,25 +1835,7 @@ export default function App() {
               <h1 className="text-lg sm:text-xl font-bold tracking-tight hidden sm:block">Shelf Control</h1>
             </div>
             
-            <div className="h-6 w-px bg-gray-200 hidden sm:block mx-2"></div>
-            
             <div className="flex items-center gap-1.5 sm:gap-2">
-              <select 
-                className="bg-transparent border border-gray-300 rounded-lg text-sm p-1 sm:p-1.5 focus:ring-blue-500 focus:border-blue-500 font-medium max-w-[140px] sm:max-w-[200px] truncate"
-                value={activeListId || ''}
-                onChange={(e) => {
-                  if (e.target.value === 'new') {
-                    createNewList();
-                  } else {
-                    setActiveListId(e.target.value);
-                  }
-                }}
-              >
-                {lists.map(l => (
-                  <option key={l.id} value={l.id}>{l.name}</option>
-                ))}
-                <option value="new">+ New Household/List...</option>
-              </select>
               <Button variant="ghost" size="icon" onClick={copyShareLink} title="Copy share link" className="h-8 w-8 text-blue-600 bg-blue-50 hover:bg-blue-100 flex">
                 {copiedLink ? <Check className="w-4 h-4" /> : <LinkIcon className="w-4 h-4" />}
               </Button>
@@ -1765,6 +1854,16 @@ export default function App() {
               <RotateCcw className={`w-3.5 h-3.5 ${lastAction ? 'text-blue-600 animate-pulse' : 'text-gray-400'}`} />
               <span className="hidden sm:inline">Undo{lastAction ? `: ${lastAction.description.substring(0, 15)}${lastAction.description.length > 15 ? '...' : ''}` : ''}</span>
               <span className="sm:hidden">Undo</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsScanDialogOpen(true)}
+              className="h-8 gap-1.5 text-xs font-semibold shadow-sm border-blue-200 bg-blue-50/50 text-blue-700 hover:bg-blue-100 flex items-center"
+              title="Scan receipt with Gemini AI"
+            >
+              <Receipt className="w-3.5 h-3.5 text-blue-600" />
+              <span className="hidden md:inline">Scan Receipt</span>
             </Button>
             <Button variant="default" size="icon" className="h-8 w-8" onClick={() => { setEditingItem(undefined); setIsDialogOpen(true); }} title="Add Item">
               <Plus className="w-4 h-4" />
@@ -1811,6 +1910,22 @@ export default function App() {
             )}
           </TabsContent>
           <TabsContent value="inventory" className="focus-visible:outline-none">
+            <div className="w-full bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 p-3 sm:p-4 rounded-xl mb-6 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+              <div className="space-y-1">
+                <h3 className="font-bold text-blue-900 flex items-center gap-2 text-base sm:text-lg">
+                  <Sparkles className="w-5 h-5 text-blue-600 animate-pulse" />
+                  AI Receipt Scanner
+                </h3>
+                <p className="text-xs sm:text-sm text-blue-700/80 max-w-xl">
+                  Quickly populate your inventory! Upload a photo of a store receipt to parse items, quantities, categories, and prices automatically.
+                </p>
+              </div>
+              <Button onClick={() => setIsScanDialogOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white shrink-0 shadow-sm font-semibold gap-2 py-4 px-5 rounded-xl text-xs sm:text-sm">
+                <Receipt className="w-4 h-4" />
+                Scan Receipt
+              </Button>
+            </div>
+
             {items.filter(item => (item.unprocessedQuantity || 0) > 0).length > 0 && (
               <div className="bg-orange-50/50 border border-orange-200 rounded-xl p-3 sm:p-5 mb-6 sm:mb-8 animate-in fade-in slide-in-from-top-4 duration-500">
                 <h3 className="font-semibold text-base sm:text-lg text-orange-900 mb-3 sm:mb-4 flex items-center gap-2">
@@ -1900,6 +2015,13 @@ export default function App() {
         onOpenChange={(open) => { if (!open) setCheckingOffItem(undefined); }}
         item={checkingOffItem}
         onConfirm={confirmCheckOff}
+      />
+
+      <ReceiptScanDialog
+        isOpen={isScanDialogOpen}
+        onOpenChange={(open) => setIsScanDialogOpen(open)}
+        existingItems={items}
+        onImport={handleImportReceipt}
       />
 
       <AnimatePresence>
