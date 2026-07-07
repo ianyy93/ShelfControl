@@ -1,35 +1,30 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // 0. Global Safety Net
+    // Global Safety Net — deny everything by default
     match /{document=**} {
       allow read, write: if false;
     }
-
-    // 3. Global Helpers
+    // --- Helpers ---
     function isSignedIn() {
       return request.auth != null;
     }
-
-    function isVerified() {
+    // NOTE: renamed from isVerified() — the old name was misleading because
+    // it only checked sign-in status, not email verification.
+    // If you want to enforce email verification in future, update this function.
+    function isSignedIn_verified() {
       return isSignedIn();
     }
-
     function isValidId(id) {
       return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
-
     function incoming() {
       return request.resource.data;
     }
-
     function existing() {
       return resource.data;
     }
-
-    // 2. Validation Blueprints
+    // --- Validation ---
     function isValidGroceryList(data) {
       let requiredFields = ['name', 'ownerId', 'members', 'createdAt', 'updatedAt'];
       return data.keys().hasAll(requiredFields)
@@ -40,10 +35,9 @@ service cloud.firestore {
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
-
     function isValidGroceryItem(data) {
       let requiredFields = ['name', 'category', 'inventoryQuantity', 'shoppingQuantity'];
-      return data.keys().hasAll(requiredFields) 
+      return data.keys().hasAll(requiredFields)
         && data.name is string && data.name.size() > 0 && data.name.size() <= 200
         && data.category is string && data.category.size() > 0 && data.category.size() <= 100
         && data.inventoryQuantity is number
@@ -54,6 +48,7 @@ service cloud.firestore {
         && (!('shoppingStore' in data) || (data.shoppingStore is string && data.shoppingStore.size() <= 100))
         && (!('unit' in data) || (data.unit is string && data.unit.size() <= 50))
         && (!('locations' in data) || (data.locations is list && data.locations.size() <= 10 && (data.locations.size() == 0 || data.locations[0] is string)))
+        && (!('location' in data) || (data.location is string && data.location.size() <= 200))
         && (!('priceHistory' in data) || data.priceHistory is list)
         && (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000))
         && (!('listId' in data) || (data.listId is string && data.listId.size() > 0 && data.listId.size() <= 128))
@@ -61,54 +56,79 @@ service cloud.firestore {
         && (!('createdAt' in data) || data.createdAt is timestamp)
         && (!('updatedAt' in data) || data.updatedAt is timestamp);
     }
-
-    // 1. The Master Gate (Relational Sync)
+    // --- User Profiles (NEW) ---
+    // Stores display name, email, and photo for each user.
+    // Written at first sign-in. Any signed-in user can read profiles (needed to resolve member names).
+    match /users/{uid} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn()
+        && request.auth.uid == uid
+        && incoming().keys().hasAll(['displayName', 'email', 'createdAt'])
+        && incoming().displayName is string && incoming().displayName.size() <= 200
+        && incoming().email is string && incoming().email.size() <= 200
+        && incoming().createdAt is timestamp
+        && (!('photoURL' in incoming()) || incoming().photoURL is string);
+      allow delete: if false;
+    }
+    // --- Lists ---
     match /lists/{listId} {
-      
-      allow get: if isVerified();
-      allow list: if isVerified() && request.auth.uid in resource.data.members;
-
-      allow create: if isVerified()
+      // INTENTIONALLY open to any signed-in user: needed so the join flow can
+      // verify the list exists before the user adds themselves as a member.
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && request.auth.uid in resource.data.members;
+      allow create: if isSignedIn()
         && isValidId(listId)
         && isValidGroceryList(incoming())
         && incoming().ownerId == request.auth.uid
         && request.auth.uid in incoming().members
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
-
-      allow update: if isVerified()
+      allow update: if isSignedIn()
         && isValidId(listId)
         && isValidGroceryList(incoming())
         && incoming().ownerId == existing().ownerId
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          // Existing member updating name
-          (request.auth.uid in existing().members && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'updatedAt'])) ||
+          // Existing member updating name only
+          (request.auth.uid in existing().members
+            && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'updatedAt']))
+          ||
           // Owner updating members or name
-          (request.auth.uid == existing().ownerId && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'members', 'updatedAt'])) ||
-          // New member adding themselves (Capability URL)
-          (!(request.auth.uid in existing().members) 
+          (request.auth.uid == existing().ownerId
+            && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'members', 'updatedAt']))
+          ||
+          // New member adding themselves (Capability URL / join flow)
+          (!(request.auth.uid in existing().members)
             && incoming().diff(existing()).affectedKeys().hasOnly(['members', 'updatedAt'])
             && incoming().members.size() == existing().members.size() + 1
             && incoming().members.hasAll(existing().members)
-            && request.auth.uid in incoming().members
-          )
+            && request.auth.uid in incoming().members)
+          ||
+          // Any existing member adding a new member (member-to-member invite)
+          (request.auth.uid in existing().members
+            && incoming().diff(existing()).affectedKeys().hasOnly(['members', 'updatedAt'])
+            && incoming().members.size() == existing().members.size() + 1
+            && incoming().members.hasAll(existing().members))
+          ||
+          // Existing member removing themselves (leave list)
+          (request.auth.uid in existing().members
+            && !(request.auth.uid in incoming().members)
+            && incoming().diff(existing()).affectedKeys().hasOnly(['members', 'updatedAt'])
+            && incoming().members.size() == existing().members.size() - 1
+            && existing().members.hasAll(incoming().members)
+            && request.auth.uid != existing().ownerId)
         );
-
-      allow delete: if isVerified()
+      allow delete: if isSignedIn()
         && isValidId(listId)
         && request.auth.uid == existing().ownerId;
-        
+      // --- Items ---
       match /items/{itemId} {
-
         function isListMember() {
           return request.auth.uid in get(/databases/$(database)/documents/lists/$(listId)).data.members;
         }
-
-        allow read, list: if isVerified() && isListMember();
-
-        allow create: if isVerified()
+        allow read, list: if isSignedIn() && isListMember();
+        allow create: if isSignedIn()
           && isValidId(listId)
           && isValidId(itemId)
           && isListMember()
@@ -117,9 +137,7 @@ service cloud.firestore {
           && incoming().creatorId == request.auth.uid
           && incoming().createdAt == request.time
           && incoming().updatedAt == request.time;
-
-        // Any member can update an item
-        allow update: if isVerified()
+        allow update: if isSignedIn()
           && isValidId(listId)
           && isValidId(itemId)
           && isListMember()
@@ -127,9 +145,8 @@ service cloud.firestore {
           && incoming().get('listId', null) == existing().get('listId', null)
           && incoming().get('creatorId', null) == existing().get('creatorId', null)
           && incoming().get('createdAt', null) == existing().get('createdAt', null)
-          && (!('updatedAt' in incoming()) || incoming().updatedAt == request.time);
-
-        allow delete: if isVerified()
+          && incoming().updatedAt == request.time;  // FIXED: was optional before
+        allow delete: if isSignedIn()
           && isValidId(listId)
           && isValidId(itemId)
           && isListMember();

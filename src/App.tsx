@@ -42,27 +42,24 @@ export default function App() {
     description: string;
   } | null>(null);
 
-  const setUndoableAction = (action: {
-    type: 'delete' | 'update' | 'create';
-    itemId: string;
-    itemData: GroceryItem;
-    description: string;
-  } | null) => {
-    setLastAction(action);
-  };
-
   const handleUndo = async () => {
     if (!lastAction || !activeListId) return;
     const action = lastAction;
-    setUndoableAction(null);
+    setLastAction(null);
     try {
       if (action.type === 'delete') {
-        const { id, ...dataToRestore } = action.itemData;
-        // Clean up any undefined fields to be safe before setting
-        await setDoc(doc(db, "lists", activeListId, "items", action.itemId), removeUndefined(dataToRestore));
+        const { id, createdAt, updatedAt, ...dataToRestore } = action.itemData;
+        await setDoc(doc(db, "lists", activeListId, "items", action.itemId), removeUndefined({
+          ...dataToRestore,
+          createdAt: createdAt ?? serverTimestamp(),
+          updatedAt: serverTimestamp()
+        }));
       } else if (action.type === 'update') {
-        const { id, ...dataToRestore } = action.itemData;
-        await setDoc(doc(db, "lists", activeListId, "items", action.itemId), removeUndefined(dataToRestore));
+        const { id, createdAt, updatedAt, ...dataToRestore } = action.itemData;
+        await updateDoc(doc(db, "lists", activeListId, "items", action.itemId), removeUndefined({
+          ...dataToRestore,
+          updatedAt: serverTimestamp()
+        }));
       } else if (action.type === 'create') {
         await deleteDoc(doc(db, "lists", activeListId, "items", action.itemId));
       }
@@ -75,7 +72,6 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
 
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
-
   const toggleExpanded = (id: string, override?: boolean) => {
     setExpandedItems(prev => ({ ...prev, [id]: override !== undefined ? override : !prev[id] }));
   };
@@ -89,6 +85,18 @@ export default function App() {
   const [filterLoc, setFilterLoc] = useState<string>('All');
   const [filterTag, setFilterTag] = useState<string>('All');
   const [filterExpiry, setFilterExpiry] = useState<string>('All');
+
+  const [batchModeGroup, setBatchModeGroup] = useState<string | null>(null);
+  const [batchSelected, setBatchSelected] = useState<Record<string, boolean>>({});
+
+  // Read once on mount — URL params don't change after initial load
+  const joinIdRef = useRef(new URLSearchParams(window.location.search).get('join'));
+  const joinId = joinIdRef.current;
+
+  useEffect(() => {
+    setBatchModeGroup(null);
+    setBatchSelected({});
+  }, [groupBy, activeTab]);
 
   useEffect(() => {
      if (activeTab === 'inventory' && groupBy === 'store') setGroupBy('location');
@@ -120,10 +128,6 @@ export default function App() {
 
   useEffect(() => {
     if (!user) return;
-    
-    // Check for ?join= parameter
-    const params = new URLSearchParams(window.location.search);
-    const joinId = params.get('join');
     
     if (joinId) {
       const joinList = async () => {
@@ -171,8 +175,7 @@ export default function App() {
       
       if (dbLists.length === 0) {
         // Only create an initial list if there's no ?join= parameter in the URL
-        const params = new URLSearchParams(window.location.search);
-        if (!params.get('join')) {
+        if (!joinId) {
           addDoc(collection(db, "lists"), {
             name: "My List",
             ownerId: user.uid,
@@ -183,8 +186,7 @@ export default function App() {
         }
       } else if (!activeListId || !dbLists.find(l => l.id === activeListId)) {
         // If we have a join parameter, let the join effect handle setActiveListId
-        const params = new URLSearchParams(window.location.search);
-        if (!params.get('join')) {
+        if (!joinId) {
           setActiveListId(dbLists[0].id!);
         }
       }
@@ -243,7 +245,7 @@ export default function App() {
         if (newPriceEntry) {
           updateData.priceHistory = arrayUnion({
             ...newPriceEntry,
-            id: Math.random().toString(36).substr(2, 9)
+            id: crypto.randomUUID()
           }) as unknown as PriceEntry[];
         } else if (editedPriceEntry) {
           if (editingItem.priceHistory) {
@@ -257,7 +259,7 @@ export default function App() {
 
         await updateDoc(doc(db, "lists", activeListId, "items", editingItem.id), removeUndefined(updateData));
         if (originalItem) {
-          setUndoableAction({
+          setLastAction({
             type: 'update',
             itemId: editingItem.id,
             itemData: originalItem,
@@ -285,12 +287,12 @@ export default function App() {
            if (newPriceEntry) {
              updateData.priceHistory = arrayUnion({
                ...newPriceEntry,
-               id: Math.random().toString(36).substr(2, 9)
+               id: crypto.randomUUID()
              }) as unknown as PriceEntry[];
            }
 
            await updateDoc(doc(db, "lists", activeListId, "items", existingMatch.id), removeUndefined(updateData));
-           setUndoableAction({
+           setLastAction({
              type: 'update',
              itemId: existingMatch.id,
              itemData: existingMatch,
@@ -308,12 +310,12 @@ export default function App() {
            if (newPriceEntry) {
              newItem.priceHistory = [{
                ...newPriceEntry,
-               id: Math.random().toString(36).substr(2, 9)
+               id: crypto.randomUUID()
              }];
            }
 
            const docRef = await addDoc(collection(db, "lists", activeListId, "items"), removeUndefined(newItem) as GroceryItem);
-           setUndoableAction({
+           setLastAction({
              type: 'create',
              itemId: docRef.id,
              itemData: { ...newItem, id: docRef.id } as GroceryItem,
@@ -347,7 +349,7 @@ export default function App() {
       const todayStr = new Date().toISOString().split('T')[0];
       const purchaseDate = scanned.dateBought || todayStr;
 
-      const entryId = Math.random().toString(36).substr(2, 9);
+      const entryId = crypto.randomUUID();
       const newEntry: InventoryEntry = {
         id: entryId,
         location: "", // Unassigned location as requested!
@@ -370,7 +372,7 @@ export default function App() {
 
         if (scanned.price !== undefined && scanned.store) {
           const newPriceEntry: PriceEntry = {
-            id: Math.random().toString(36).substr(2, 9),
+            id: crypto.randomUUID(),
             store: scanned.store,
             date: purchaseDate,
             price: scanned.price,
@@ -400,7 +402,7 @@ export default function App() {
 
         if (scanned.price !== undefined && scanned.store) {
           newItem.priceHistory = [{
-            id: Math.random().toString(36).substr(2, 9),
+            id: crypto.randomUUID(),
             store: scanned.store,
             date: purchaseDate,
             price: scanned.price,
@@ -422,7 +424,7 @@ export default function App() {
     if (!originalItem) return;
     try {
       await deleteDoc(doc(db, "lists", activeListId, "items", itemId));
-      setUndoableAction({
+      setLastAction({
         type: 'delete',
         itemId,
         itemData: originalItem,
@@ -453,7 +455,7 @@ export default function App() {
         entry.dateAdded = entry.dateAdded || today;
       } else {
         newEntries.push({
-          id: Math.random().toString(36).substr(2, 9),
+          id: crypto.randomUUID(),
           location: defaultLoc,
           quantity: invDelta,
           dateBought: today,
@@ -510,7 +512,7 @@ export default function App() {
 
     try {
       await updateDoc(doc(db, "lists", activeListId, "items", item.id), removeUndefined(updateData));
-      setUndoableAction({
+      setLastAction({
         type: 'update',
         itemId: item.id,
         itemData: itemBefore,
@@ -538,7 +540,7 @@ export default function App() {
       }
 
       await updateDoc(doc(db, "lists", activeListId, "items", itemId), removeUndefined(updateData));
-      setUndoableAction({
+      setLastAction({
         type: 'update',
         itemId,
         itemData: itemBefore,
@@ -568,12 +570,12 @@ export default function App() {
         if (priceEntry) {
           updateData.priceHistory = arrayUnion({
             ...priceEntry,
-            id: Math.random().toString(36).substr(2, 9)
+            id: crypto.randomUUID()
           });
         }
 
         await updateDoc(doc(db, "lists", activeListId, "items", item.id), removeUndefined(updateData));
-        setUndoableAction({
+        setLastAction({
           type: 'update',
           itemId: item.id,
           itemData: itemBefore,
@@ -619,7 +621,7 @@ export default function App() {
                 const remaining = e.quantity - quantityToMove;
                 newEntries.push({ ...e, quantity: remaining });
                 const { openedDate: _, ...restE } = e;
-                newEntries.push({ ...restE, id: "temp-" + Date.now() + Math.random().toString(36).substr(2, 9), quantity: quantityToMove, location: newLocation, isOpened: false });
+                newEntries.push({ ...restE, id: "temp-" + crypto.randomUUID(), quantity: quantityToMove, location: newLocation, isOpened: false });
             }
         } else {
             newEntries.push(e);
@@ -635,7 +637,7 @@ export default function App() {
         locations: newLocs,
         updatedAt: serverTimestamp()
       }));
-      setUndoableAction({
+      setLastAction({
         type: 'update',
         itemId: item.id,
         itemData: itemBefore,
@@ -644,6 +646,46 @@ export default function App() {
     } catch (error) {
       console.error("Error moving entry:", error);
       handleFirestoreError(error, 'update', `lists/${activeListId}/items/${item.id}`);
+    }
+  };
+
+  const handleBatchMove = async (sourceLocation: string, targetLocation: string) => {
+    if (!user || !activeListId) return;
+    
+    const itemsToUpdate = items.filter(item => {
+      const relevant = (item.inventoryEntries || []).filter(e => (e.location || 'Unassigned') === sourceLocation || (!e.location && sourceLocation === 'Unassigned'));
+      return relevant.some(e => batchSelected[`${item.id}_${e.id}`]);
+    });
+
+    if (itemsToUpdate.length === 0) return;
+
+    try {
+      const targetLocValue = targetLocation === 'Unassigned' ? '' : targetLocation;
+      const promises = itemsToUpdate.map(async (item) => {
+        const newEntries = (item.inventoryEntries || []).map(e => {
+          const isSelected = batchSelected[`${item.id}_${e.id}`];
+          if (isSelected) {
+            return { ...e, location: targetLocValue };
+          }
+          return e;
+        });
+
+        const newLocs = Array.from(new Set(newEntries.map(e => e.location).filter(Boolean)));
+        
+        await updateDoc(doc(db, "lists", activeListId, "items", item.id!), removeUndefined({
+          inventoryEntries: newEntries,
+          locations: newLocs,
+          updatedAt: serverTimestamp()
+        }));
+      });
+
+      await Promise.all(promises);
+      
+      setBatchModeGroup(null);
+      setBatchSelected({});
+    } catch (error) {
+      console.error("Error executing batch move:", error);
+      handleFirestoreError(error, 'update', `lists/${activeListId}/items-batch`);
     }
   };
 
@@ -688,7 +730,7 @@ export default function App() {
         locations: newLocs,
         updatedAt: serverTimestamp()
       }));
-      setUndoableAction({
+      setLastAction({
         type: 'update',
         itemId: item.id,
         itemData: itemBefore,
@@ -722,7 +764,7 @@ export default function App() {
                 // Add the ONE opened box
                 newEntries.push({ 
                     ...e, 
-                    id: "temp-" + Date.now() + Math.random(), 
+                    id: "temp-" + crypto.randomUUID(), 
                     quantity: 1, 
                     isOpened: true, 
                     openedDate: new Date().toISOString().split('T')[0] 
@@ -746,7 +788,7 @@ export default function App() {
         inventoryEntries: newEntries,
         updatedAt: serverTimestamp()
       }));
-      setUndoableAction({
+      setLastAction({
         type: 'update',
         itemId: item.id,
         itemData: itemBefore,
@@ -773,7 +815,7 @@ export default function App() {
         inventoryEntries: newEntries,
         updatedAt: serverTimestamp()
       }));
-      setUndoableAction({
+      setLastAction({
         type: 'update',
         itemId: item.id,
         itemData: itemBefore,
@@ -804,18 +846,31 @@ export default function App() {
     }
   };
   
-  const [copiedLink, setCopiedLink] = useState(false);
+  const [isSharePanelOpen, setIsSharePanelOpen] = useState(false);
+  const [copiedHousehold, setCopiedHousehold] = useState(false);
+  const [copiedApp, setCopiedApp] = useState(false);
 
-  const copyShareLink = () => {
-    if (!activeListId) return;
+  const getShareUrl = (includeJoin: boolean) => {
     const url = new URL(window.location.href);
+    // AI Studio dev-to-pre URL rewrite (keep existing logic)
     if (url.hostname.includes('ais-dev-')) {
       url.hostname = url.hostname.replace('ais-dev-', 'ais-pre-');
     }
-    url.searchParams.set('join', activeListId);
-    navigator.clipboard.writeText(url.toString());
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2000);
+    url.search = '';  // clear all params
+    if (includeJoin && activeListId) {
+      url.searchParams.set('join', activeListId);
+    }
+    return url.toString();
+  };
+  const copyHouseholdLink = () => {
+    navigator.clipboard.writeText(getShareUrl(true));
+    setCopiedHousehold(true);
+    setTimeout(() => setCopiedHousehold(false), 2000);
+  };
+  const copyAppLink = () => {
+    navigator.clipboard.writeText(getShareUrl(false));
+    setCopiedApp(true);
+    setTimeout(() => setCopiedApp(false), 2000);
   };
 
   const inventoryItems = useMemo(() => items, [items]);
@@ -1094,59 +1149,102 @@ export default function App() {
               openedPcsText = `, ${totalPcs} pcs`;
           }
 
+          const isThisGroupBatch = batchModeGroup === group.name;
+          const itemRelevantEntries = (item.inventoryEntries || []).filter(e => (e.location || 'Unassigned') === group.name || (!e.location && group.name === 'Unassigned'));
+          const isSelected = itemRelevantEntries.length > 0 && itemRelevantEntries.every(e => batchSelected[`${item.id}_${e.id}`]);
+          
+          const handleCardClick = (e: React.MouseEvent) => {
+            if (isThisGroupBatch) {
+              e.stopPropagation();
+              const newSelected = { ...batchSelected };
+              itemRelevantEntries.forEach(entry => {
+                newSelected[`${item.id}_${entry.id}`] = !isSelected;
+              });
+              setBatchSelected(newSelected);
+            } else {
+              toggleExpanded(item.id!);
+            }
+          };
+
           return (
-          <div key={`${group.name}-${item.id}`} onClick={() => toggleExpanded(item.id!)} className="bg-white p-3 sm:p-4 rounded-xl shadow-sm ring-1 ring-gray-900/5 flex flex-col gap-2 sm:gap-3 cursor-pointer hover:shadow-md transition-shadow">
+          <div key={`${group.name}-${item.id}`} onClick={handleCardClick} className={`bg-white p-3 sm:p-4 rounded-xl shadow-sm ring-1 flex flex-col gap-2 sm:gap-3 cursor-pointer hover:shadow-md transition-all duration-200 ${isThisGroupBatch ? (isSelected ? 'ring-blue-500 bg-blue-50/20' : 'ring-gray-200 hover:ring-blue-300') : 'ring-gray-900/5'}`}>
             <div className="flex justify-between items-start gap-2">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <div className="font-medium text-gray-900 truncate" title={item.name}>{item.name}</div>
-                  {item.inventoryEntries?.some(e => e.isOpened) && (
-                    <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 bg-orange-500 text-white border-none font-semibold shadow-sm">
-                      OPENED
-                    </Badge>
-                  )}
-                </div>
-                {effectiveGroupBy === 'category' && (
-                  <div className="flex flex-wrap gap-1 mt-1.5">
-                    {(item.locations || [item.location]).filter(Boolean).map(loc => (
-                      <Badge key={loc!} variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-gray-50">{loc}</Badge>
-                    ))}
+              <div className="flex items-start gap-2.5 flex-1 min-w-0">
+                {isThisGroupBatch && (
+                  <div className="pt-0.5" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                      checked={isSelected}
+                      onChange={() => {
+                        const newSelected = { ...batchSelected };
+                        itemRelevantEntries.forEach(entry => {
+                          newSelected[`${item.id}_${entry.id}`] = !isSelected;
+                        });
+                        setBatchSelected(newSelected);
+                      }}
+                    />
                   </div>
                 )}
-                {effectiveGroupBy === 'location' && (
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <div className="font-medium text-gray-900 truncate" title={item.name}>{item.name}</div>
+                    {item.inventoryEntries?.some(e => e.isOpened) && (
+                      <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 bg-orange-500 text-white border-none font-semibold shadow-sm">
+                        OPENED
+                      </Badge>
+                    )}
+                  </div>
+                  {effectiveGroupBy === 'category' && (
                     <div className="flex flex-wrap gap-1 mt-1.5">
-                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-gray-50">{item.category}</Badge>
+                      {(item.locations || [item.location]).filter(Boolean).map(loc => (
+                        <Badge key={loc!} variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-gray-50">{loc}</Badge>
+                      ))}
                     </div>
-                )}
+                  )}
+                  {effectiveGroupBy === 'location' && (
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-gray-50">{item.category}</Badge>
+                      </div>
+                  )}
+                </div>
               </div>
               <div className="flex flex-col items-end gap-1 shrink-0">
-                <div className="flex items-center gap-2" onClick={(e) => { if (!expandedItems[item.id!]) { e.stopPropagation(); toggleExpanded(item.id!); } }}>
-                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); updateQuantities(item, -1, 0, effectiveGroupBy === 'location' ? group.name : undefined); }}>
-                    <Minus className="w-4 h-4" />
-                  </Button>
-                  <span className="text-lg font-bold text-gray-900 text-center min-w-[2rem]">
-                    {displayInventoryQuantity} <span className="text-[10px] text-gray-500 font-normal block -mt-1">{item.unit || "ct"}{openedPcsText}</span>
+                {isThisGroupBatch ? (
+                  <span className="text-xs font-semibold text-blue-700 bg-blue-50 px-2 py-1 rounded-md border border-blue-100/60 mt-1">
+                    {displayInventoryQuantity} {item.unit || "ct"}
                   </span>
-                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); updateQuantities(item, 1, 0, effectiveGroupBy === 'location' ? group.name : undefined); }}>
-                    <Plus className="w-4 h-4" />
-                  </Button>
-                </div>
+                ) : (
+                  <div className="flex items-center gap-2" onClick={(e) => { if (!expandedItems[item.id!]) { e.stopPropagation(); toggleExpanded(item.id!); } }}>
+                    <Button variant="outline" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); updateQuantities(item, -1, 0, effectiveGroupBy === 'location' ? group.name : undefined); }}>
+                      <Minus className="w-4 h-4" />
+                    </Button>
+                    <span className="text-lg font-bold text-gray-900 text-center min-w-[2rem]">
+                      {displayInventoryQuantity} <span className="text-[10px] text-gray-500 font-normal block -mt-1">{item.unit || "ct"}{openedPcsText}</span>
+                    </span>
+                    <Button variant="outline" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); updateQuantities(item, 1, 0, effectiveGroupBy === 'location' ? group.name : undefined); }}>
+                      <Plus className="w-4 h-4" />
+                    </Button>
+                  </div>
+                )}
                 {item.shoppingQuantity > 0 && <span className="text-xs text-blue-600 font-medium">+{item.shoppingQuantity} {item.unit || ""} to buy</span>}
-                <div className="flex gap-1 mt-1 -mr-2">
-                  <Button variant="ghost" size="icon" className="h-10 w-10 text-gray-400 hover:text-blue-600" onClick={(e) => { e.stopPropagation(); setEditingItem(item); setIsDialogOpen(true); }}>
-                    <Edit className="w-4 h-4" />
-                  </Button>
-                  <Button variant="ghost" size="icon" className="h-10 w-10 text-red-400 hover:text-red-700" onClick={(e) => {
-                    e.stopPropagation();
-                    handleDelete(item.id!);
-                  }}>
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
+                {!isThisGroupBatch && (
+                  <div className="flex gap-1 mt-1 -mr-2">
+                    <Button variant="ghost" size="icon" className="h-10 w-10 text-gray-400 hover:text-blue-600" onClick={(e) => { e.stopPropagation(); setEditingItem(item); setIsDialogOpen(true); }}>
+                      <Edit className="w-4 h-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-10 w-10 text-red-400 hover:text-red-700" onClick={(e) => {
+                      e.stopPropagation();
+                      handleDelete(item.id!);
+                    }}>
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
             
-            {expandedItems[item.id!] && item.inventoryEntries && item.inventoryEntries.length > 0 && (
+            {!isThisGroupBatch && expandedItems[item.id!] && item.inventoryEntries && item.inventoryEntries.length > 0 && (
               <div className="bg-gray-50/50 rounded-lg text-xs mt-3 border border-gray-100 divide-y divide-gray-100" onClick={e => e.stopPropagation()}>
                  {item.inventoryEntries
                     .filter(entry => effectiveGroupBy !== 'location' || (entry.location || 'Unassigned') === group.name || (!entry.location && group.name === 'Unassigned'))
@@ -1224,7 +1322,7 @@ export default function App() {
               </div>
             )}
 
-            {expandedItems[item.id!] && (
+            {!isThisGroupBatch && expandedItems[item.id!] && (
               <div className="bg-blue-50/30 rounded-lg text-xs mt-3 border border-blue-100" onClick={e => e.stopPropagation()}>
                 <div className="p-2 border-b border-blue-100 font-semibold text-blue-800 uppercase tracking-wider text-[10px] flex items-center justify-between bg-blue-50/50 rounded-t-lg">
                    <span>Price History</span>
@@ -1284,12 +1382,115 @@ export default function App() {
             </div>
           )}
 
-            {expandedItems[item.id!] && item.notes && <div className="text-xs text-gray-500 mt-1 line-clamp-2 italic border-t pt-2" title={item.notes}>{item.notes}</div>}
+            {!isThisGroupBatch && expandedItems[item.id!] && item.notes && <div className="text-xs text-gray-500 mt-1 line-clamp-2 italic border-t pt-2" title={item.notes}>{item.notes}</div>}
           </div>
         );
         })}
       </div>
       );
+
+      let batchToolbar = null;
+      if (effectiveGroupBy === 'location' && group.name !== 'Out of Stock') {
+        const isThisGroupBatch = batchModeGroup === group.name;
+        
+        // Find all inventory entries in this group
+        const groupEntries: { itemId: string; entryId: string }[] = [];
+        group.items.forEach(item => {
+          (item.inventoryEntries || []).forEach(e => {
+            if ((e.location || 'Unassigned') === group.name || (!e.location && group.name === 'Unassigned')) {
+              groupEntries.push({ itemId: item.id!, entryId: e.id });
+            }
+          });
+        });
+
+        const selectedCount = groupEntries.filter(ge => batchSelected[`${ge.itemId}_${ge.entryId}`]).length;
+        const allSelected = groupEntries.length > 0 && selectedCount === groupEntries.length;
+
+        if (isThisGroupBatch) {
+          batchToolbar = (
+            <div className="mb-4 p-3 bg-blue-50/60 border border-blue-100 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-sm" onClick={e => e.stopPropagation()}>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  id={`batch-toggle-${group.name}`}
+                  className="h-8 text-xs font-semibold bg-white border-blue-200 text-blue-700 hover:bg-blue-50"
+                  onClick={() => {
+                    const newSelected = { ...batchSelected };
+                    if (allSelected) {
+                      groupEntries.forEach(ge => {
+                        delete newSelected[`${ge.itemId}_${ge.entryId}`];
+                      });
+                    } else {
+                      groupEntries.forEach(ge => {
+                        newSelected[`${ge.itemId}_${ge.entryId}`] = true;
+                      });
+                    }
+                    setBatchSelected(newSelected);
+                  }}
+                >
+                  {allSelected ? 'Deselect All' : 'Select All'}
+                </Button>
+                <span className="font-semibold text-blue-900">
+                  {selectedCount} of {groupEntries.length} items selected
+                </span>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <div className="relative inline-flex items-center">
+                  <select
+                    id={`batch-target-select-${group.name}`}
+                    className="appearance-none bg-white border border-gray-300 text-xs font-medium rounded-lg pl-3 pr-8 py-1.5 cursor-pointer focus:ring-1 focus:ring-blue-500 max-w-[160px] truncate"
+                    defaultValue=""
+                    onChange={(e) => {
+                      const target = e.target.value;
+                      if (target) {
+                        handleBatchMove(group.name, target);
+                      }
+                    }}
+                  >
+                    <option value="" disabled>Move selection to...</option>
+                    {locations.filter(loc => loc !== group.name).map(loc => (
+                      <option key={loc} value={loc}>{loc}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-gray-500 absolute right-2 pointer-events-none" />
+                </div>
+                
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  id={`batch-cancel-${group.name}`}
+                  className="h-8 text-xs font-medium text-gray-500 hover:text-gray-800"
+                  onClick={() => {
+                    setBatchModeGroup(null);
+                    setBatchSelected({});
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          );
+        } else if (groupEntries.length > 0) {
+          batchToolbar = (
+            <div className="mb-3 flex justify-end" onClick={e => e.stopPropagation()}>
+              <Button
+                variant="outline"
+                size="sm"
+                id={`batch-enable-${group.name}`}
+                className="h-8 text-xs font-semibold border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center gap-1.5"
+                onClick={() => {
+                  setBatchModeGroup(group.name);
+                  setBatchSelected({});
+                }}
+              >
+                Batch Move Items
+              </Button>
+            </div>
+          );
+        }
+      }
 
       if (searchString !== undefined) {
         return <div key={group.name} className="mt-4">{gridContent}</div>;
@@ -1309,6 +1510,7 @@ export default function App() {
             </div>
           </AccordionTrigger>
           <AccordionContent className="px-4 pt-2">
+            {batchToolbar}
             {gridContent}
           </AccordionContent>
         </AccordionItem>
@@ -1835,10 +2037,70 @@ export default function App() {
               <h1 className="text-lg sm:text-xl font-bold tracking-tight hidden sm:block">Shelf Control</h1>
             </div>
             
-            <div className="flex items-center gap-1.5 sm:gap-2">
-              <Button variant="ghost" size="icon" onClick={copyShareLink} title="Copy share link" className="h-8 w-8 text-blue-600 bg-blue-50 hover:bg-blue-100 flex">
-                {copiedLink ? <Check className="w-4 h-4" /> : <LinkIcon className="w-4 h-4" />}
+            <div className="flex items-center gap-1.5 sm:gap-2 relative">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setIsSharePanelOpen(prev => !prev)}
+                title="Share options"
+                className="h-8 w-8 text-blue-600 bg-blue-50 hover:bg-blue-100 flex"
+                id="header-share-btn"
+              >
+                <LinkIcon className="w-4 h-4" />
               </Button>
+              <AnimatePresence>
+                {isSharePanelOpen && (
+                  <>
+                    {/* Backdrop to close panel */}
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setIsSharePanelOpen(false)}
+                    />
+                    <motion.div
+                      initial={{ opacity: 0, y: -8, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -8, scale: 0.95 }}
+                      transition={{ duration: 0.15 }}
+                      className="absolute left-0 top-10 z-50 w-72 bg-white rounded-xl shadow-xl border border-gray-200 p-3 space-y-2"
+                    >
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider px-1 pb-1">Share Options</p>
+                      {/* Household invite */}
+                      <button
+                        onClick={copyHouseholdLink}
+                        className="w-full flex items-start gap-3 p-3 rounded-lg hover:bg-blue-50 transition-colors text-left group"
+                      >
+                        <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center shrink-0 mt-0.5">
+                          <Users className="w-4 h-4 text-blue-600" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-semibold text-gray-900">Invite to this household</span>
+                            {copiedHousehold && <span className="text-xs text-green-600 font-medium">Copied!</span>}
+                          </div>
+                          <span className="text-xs text-gray-500">Recipient joins your shared list directly</span>
+                        </div>
+                      </button>
+                      <div className="border-t border-gray-100" />
+                      {/* App share */}
+                      <button
+                        onClick={copyAppLink}
+                        className="w-full flex items-start gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors text-left group"
+                      >
+                        <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center shrink-0 mt-0.5">
+                          <LinkIcon className="w-4 h-4 text-gray-600" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-semibold text-gray-900">Share the app</span>
+                            {copiedApp && <span className="text-xs text-green-600 font-medium">Copied!</span>}
+                          </div>
+                          <span className="text-xs text-gray-500">Recipient creates their own household</span>
+                        </div>
+                      </button>
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
             </div>
           </div>
           <div className="flex items-center gap-1.5 sm:gap-3">
@@ -2055,7 +2317,7 @@ export default function App() {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => setUndoableAction(null)}
+                onClick={() => setLastAction(null)}
                 className="h-8 w-8 text-gray-400 hover:text-white hover:bg-gray-800 cursor-pointer"
                 id="undo-toast-close"
               >

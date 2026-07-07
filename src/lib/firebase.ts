@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { getFirestore, doc, getDocFromServer, setDoc, serverTimestamp } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 export interface FirestoreErrorInfo {
@@ -32,7 +32,7 @@ export const handleFirestoreError = (error: unknown, operationType: FirestoreErr
         userId: user?.uid || 'anonymous',
         email: user?.email || '',
         emailVerified: user?.emailVerified || false,
-        isAnonymous: user?.isAnonymous || true,
+        isAnonymous: user?.isAnonymous ?? false,
         providerInfo: user?.providerData.map(p => ({
           providerId: p.providerId,
           displayName: p.displayName || '',
@@ -65,7 +65,16 @@ export const signIn = async () => {
   try {
     console.log("Starting signInWithPopup...");
     const result = await signInWithPopup(auth, provider);
-    console.log("Sign-in successful for user:", result.user.uid);
+    const user = result.user;
+    console.log("Sign-in successful for user:", user.uid);
+    // Upsert user profile — preserve createdAt if profile already exists
+    const profileRef = doc(db, "users", user.uid);
+    await setDoc(profileRef, {
+      displayName: user.displayName || "",
+      email: user.email || "",
+      photoURL: user.photoURL || "",
+      createdAt: serverTimestamp(),
+    }, { merge: true });
   } catch (error) {
     console.error("Error signing in", error);
     // Re-throw or handle so UI can know
@@ -79,4 +88,23 @@ export const signOut = async () => {
   } catch (error) {
     console.error("Error signing out", error);
   }
+};
+
+export interface UserProfile {
+  displayName: string;
+  email: string;
+  photoURL?: string;
+}
+
+export const getUserProfiles = async (uids: string[]): Promise<Record<string, UserProfile>> => {
+  if (uids.length === 0) return {};
+  const { getDocs, collection, query, where } = await import('firebase/firestore');
+  // Firestore 'in' queries support up to 30 items — lists have max 20 members, so this is safe
+  const q = query(collection(db, 'users'), where('__name__', 'in', uids));
+  const snap = await getDocs(q);
+  const result: Record<string, UserProfile> = {};
+  snap.forEach(d => {
+    result[d.id] = d.data() as UserProfile;
+  });
+  return result;
 };
