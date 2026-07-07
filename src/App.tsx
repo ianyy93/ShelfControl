@@ -1,12 +1,12 @@
 import { motion, AnimatePresence } from "motion/react";
 import React, { useEffect, useState, useMemo, useRef } from "react";
-import { auth, db, signIn, signOut, handleFirestoreError } from "./lib/firebase";
+import { auth, db, signIn, signOut, handleFirestoreError, getUserProfiles, syncUserProfile } from "./lib/firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
-import { collection, onSnapshot, query, addDoc, serverTimestamp, doc, deleteDoc, updateDoc, where, getDoc, arrayUnion, setDoc } from "firebase/firestore";
+import { collection, onSnapshot, query, addDoc, serverTimestamp, doc, deleteDoc, updateDoc, where, getDoc, arrayUnion, setDoc, arrayRemove } from "firebase/firestore";
 import { GroceryItem, GroceryList, CATEGORIES, InventoryEntry, PRESET_LOCATIONS, PriceEntry, Category } from "./types";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
-import { Plus, LogOut, Trash2, Edit, ShoppingCart, Check, Minus, Users, Link as LinkIcon, LineChart, Box, ChevronRight, ChevronDown, EyeOff, X, Search, RotateCcw } from "lucide-react";
+import { Plus, LogOut, Trash2, Edit, ShoppingCart, Check, Minus, Users, Link as LinkIcon, LineChart, Box, ChevronRight, ChevronDown, EyeOff, X, Search, RotateCcw, Cog, AlertTriangle } from "lucide-react";
 import { GroceriesIcon } from "./components/GroceriesIcon";
 import { MoveEntryDialog } from "./components/MoveEntryDialog";
 import { removeUndefined } from "./lib/utils";
@@ -27,6 +27,84 @@ export default function App() {
   const [lists, setLists] = useState<GroceryList[]>([]);
   const [activeListId, setActiveListId] = useState<string | null>(null);
   const [items, setItems] = useState<GroceryItem[]>([]);
+  
+  const [memberProfiles, setMemberProfiles] = useState<Record<string, { displayName: string, email: string, photoURL?: string }>>({});
+  const [loadingProfiles, setLoadingProfiles] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [selectedStoreFilter, setSelectedStoreFilter] = useState<string>('All');
+
+  useEffect(() => {
+    const fetchMembers = async () => {
+      if (!user) return;
+      const currentList = lists.find(l => l.id === activeListId);
+      if (currentList?.members && currentList.members.length > 0) {
+        setLoadingProfiles(true);
+        try {
+          const profiles = await getUserProfiles(currentList.members);
+          setMemberProfiles(profiles);
+        } catch (e) {
+          console.error("Error fetching member profiles:", e);
+        } finally {
+          setLoadingProfiles(false);
+        }
+      }
+    };
+    fetchMembers();
+  }, [activeListId, lists, user]);
+
+  const [newListName, setNewListName] = useState("");
+  
+  useEffect(() => {
+    const currentList = lists.find(l => l.id === activeListId);
+    if (isSettingsOpen && currentList) {
+      setNewListName(currentList.name);
+    }
+  }, [isSettingsOpen, activeListId, lists]);
+
+  const handleRenameList = async () => {
+    if (!activeListId || !newListName.trim()) return;
+    try {
+      await updateDoc(doc(db, "lists", activeListId), {
+        name: newListName.trim()
+      });
+    } catch (e) {
+      console.error("Error renaming list:", e);
+    }
+  };
+
+  const handleKickMember = async (memberId: string) => {
+    if (!activeListId) return;
+    try {
+      await updateDoc(doc(db, "lists", activeListId), {
+        members: arrayRemove(memberId)
+      });
+      setMemberProfiles(prev => {
+        const next = { ...prev };
+        delete next[memberId];
+        return next;
+      });
+    } catch (e) {
+      console.error("Error kicking member:", e);
+    }
+  };
+
+  const handleLeaveList = async () => {
+    if (!activeListId || !user) return;
+    try {
+      await updateDoc(doc(db, "lists", activeListId), {
+        members: arrayRemove(user.uid)
+      });
+      setIsSettingsOpen(false);
+      const remainingLists = lists.filter(l => l.id !== activeListId);
+      if (remainingLists.length > 0) {
+        setActiveListId(remainingLists[0].id!);
+      } else {
+        setActiveListId(null);
+      }
+    } catch (e) {
+      console.error("Error leaving list:", e);
+    }
+  };
   
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isScanDialogOpen, setIsScanDialogOpen] = useState(false);
@@ -122,6 +200,9 @@ export default function App() {
       console.log("Auth state changed:", currentUser ? `Logged in as ${currentUser.uid}` : "Logged out");
       setUser(currentUser);
       setLoading(false);
+      if (currentUser) {
+        syncUserProfile(currentUser);
+      }
     });
     return () => unsubscribe();
   }, []);
@@ -873,8 +954,78 @@ export default function App() {
     setTimeout(() => setCopiedApp(false), 2000);
   };
 
+  const getExpiryStatus = (expiryDate?: string) => {
+    if (!expiryDate) return 'none';
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const exp = new Date(expiryDate + 'T00:00:00');
+    const diffTime = exp.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    if (diffDays < 0) return 'expired';
+    if (diffDays <= 3) return 'soon';
+    return 'safe';
+  };
+
+  const expiredOrSoonItems = useMemo(() => {
+    return items.filter(item => {
+      return (item.inventoryEntries || []).some(entry => {
+        const status = getExpiryStatus(entry.expiryDate);
+        return status === 'expired' || status === 'soon';
+      });
+    });
+  }, [items]);
+
+  const replenishmentSuggestions = useMemo(() => {
+    const suggestions: { item: GroceryItem; meanInterval: number; daysSince: number }[] = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    items.forEach(item => {
+      if (item.inventoryQuantity > 0 || item.shoppingQuantity > 0 || item.unprocessedQuantity) return;
+      if (item.isHiddenSuggestion) return;
+
+      const history = item.priceHistory || [];
+      if (history.length < 2) return;
+
+      const dates = Array.from(new Set(history.map(p => p.date)))
+        .map(dStr => new Date(dStr + 'T00:00:00'))
+        .filter(d => !isNaN(d.getTime()))
+        .sort((a, b) => a.getTime() - b.getTime());
+
+      if (dates.length < 2) return;
+
+      let totalDays = 0;
+      for (let i = 0; i < dates.length - 1; i++) {
+        const diffTime = dates[i + 1].getTime() - dates[i].getTime();
+        totalDays += diffTime / (1000 * 60 * 60 * 24);
+      }
+      const meanInterval = totalDays / (dates.length - 1);
+      if (meanInterval <= 0) return;
+
+      const lastPurchaseDate = dates[dates.length - 1];
+      const diffSince = today.getTime() - lastPurchaseDate.getTime();
+      const daysSinceLastPurchase = diffSince / (1000 * 60 * 60 * 24);
+
+      if (daysSinceLastPurchase >= meanInterval * 0.9) {
+        suggestions.push({
+          item,
+          meanInterval: Math.round(meanInterval),
+          daysSince: Math.round(daysSinceLastPurchase)
+        });
+      }
+    });
+
+    return suggestions;
+  }, [items]);
+
   const inventoryItems = useMemo(() => items, [items]);
-  const shoppingItems = useMemo(() => items.filter(i => i.shoppingQuantity > 0), [items]);
+  const shoppingItems = useMemo(() => {
+    return items.filter(i => {
+      if (i.shoppingQuantity <= 0) return false;
+      if (selectedStoreFilter !== 'All' && i.shoppingStore !== selectedStoreFilter) return false;
+      return true;
+    });
+  }, [items, selectedStoreFilter]);
   const suggestedItems = useMemo(() => items.filter(i => i.shoppingQuantity === 0 && i.inventoryQuantity === 0 && !i.unprocessedQuantity && !i.isHiddenSuggestion), [items]);
   const currentList = lists.find(l => l.id === activeListId);
 
@@ -901,6 +1052,21 @@ export default function App() {
           <div className="text-sm text-gray-500 hidden sm:block ml-2">
             {activeTab === 'shopping' ? `${shoppingItems.length} to buy` : `${inventoryItems.length} items`}
           </div>
+          {activeTab === 'shopping' && (
+            <div className="flex items-center gap-1.5 ml-2">
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider hidden lg:inline">Store:</span>
+              <select
+                value={selectedStoreFilter}
+                onChange={(e) => setSelectedStoreFilter(e.target.value)}
+                className="bg-gray-50 border border-gray-200 text-xs rounded-lg p-1.5 font-semibold text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-500 max-w-[110px] sm:max-w-[150px]"
+              >
+                <option value="All">All Stores</option>
+                {stores.map(st => (
+                  <option key={st} value={st}>{st}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {filterCat !== 'All' && <Badge variant="secondary" className="bg-blue-50 text-blue-700">{filterCat}</Badge>}
@@ -1166,8 +1332,18 @@ export default function App() {
             }
           };
 
+          const hasExpiredEntry = (item.inventoryEntries || []).some(e => getExpiryStatus(e.expiryDate) === 'expired');
+          const hasSoonEntry = !hasExpiredEntry && (item.inventoryEntries || []).some(e => getExpiryStatus(e.expiryDate) === 'soon');
+          
+          let cardBgBorderClass = 'bg-white ring-gray-900/5';
+          if (hasExpiredEntry) {
+            cardBgBorderClass = 'bg-red-50/70 border border-red-200 ring-red-200';
+          } else if (hasSoonEntry) {
+            cardBgBorderClass = 'bg-amber-50/70 border border-amber-200 ring-amber-200';
+          }
+
           return (
-          <div key={`${group.name}-${item.id}`} onClick={handleCardClick} className={`bg-white p-3 sm:p-4 rounded-xl shadow-sm ring-1 flex flex-col gap-2 sm:gap-3 cursor-pointer hover:shadow-md transition-all duration-200 ${isThisGroupBatch ? (isSelected ? 'ring-blue-500 bg-blue-50/20' : 'ring-gray-200 hover:ring-blue-300') : 'ring-gray-900/5'}`}>
+          <div key={`${group.name}-${item.id}`} onClick={handleCardClick} className={`p-3 sm:p-4 rounded-xl shadow-sm ring-1 flex flex-col gap-2 sm:gap-3 cursor-pointer hover:shadow-md transition-all duration-200 ${isThisGroupBatch ? (isSelected ? 'ring-blue-500 bg-blue-50/20' : 'ring-gray-200 hover:ring-blue-300') : cardBgBorderClass}`}>
             <div className="flex justify-between items-start gap-2">
               <div className="flex items-start gap-2.5 flex-1 min-w-0">
                 {isThisGroupBatch && (
@@ -1187,8 +1363,18 @@ export default function App() {
                   </div>
                 )}
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     <div className="font-medium text-gray-900 truncate" title={item.name}>{item.name}</div>
+                    {hasExpiredEntry && (
+                      <Badge className="text-[9px] px-1.5 py-0 h-4 bg-red-600 text-white border-none font-bold shadow-sm">
+                        EXPIRED
+                      </Badge>
+                    )}
+                    {hasSoonEntry && (
+                      <Badge className="text-[9px] px-1.5 py-0 h-4 bg-amber-500 text-white border-none font-bold shadow-sm">
+                        EXPIRING SOON
+                      </Badge>
+                    )}
                     {item.inventoryEntries?.some(e => e.isOpened) && (
                       <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 bg-orange-500 text-white border-none font-semibold shadow-sm">
                         OPENED
@@ -1687,7 +1873,21 @@ export default function App() {
         acc[item.category].push(item);
         return acc;
       }, {} as Record<string, GroceryItem[]>);
-      groups = CATEGORIES.filter(c => g[c]?.length > 0).map(c => ({ name: c, items: g[c] }));
+      const walkthroughOrder = [
+        "Produce",
+        "Meat & Seafood",
+        "Dairy & Eggs",
+        "Pantry",
+        "Frozen",
+        "Beverages",
+        "Snacks",
+        "Household",
+        "Dog Supplies",
+        "Other"
+      ];
+      groups = walkthroughOrder
+        .filter(c => g[c as Category]?.length > 0)
+        .map(c => ({ name: c, items: g[c as Category] }));
     } else if (activeGroupBy === 'store') {
       const g = filteredItems.reduce((acc, item) => {
         const store = item.shoppingStore || 'Unassigned';
@@ -2048,6 +2248,18 @@ export default function App() {
               >
                 <LinkIcon className="w-4 h-4" />
               </Button>
+              {activeListId && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setIsSettingsOpen(true)}
+                  title="Household Settings"
+                  className="h-8 w-8 text-gray-600 bg-gray-50 hover:bg-gray-100 flex"
+                  id="header-settings-btn"
+                >
+                  <Cog className="w-4 h-4" />
+                </Button>
+              )}
               <AnimatePresence>
                 {isSharePanelOpen && (
                   <>
@@ -2170,6 +2382,64 @@ export default function App() {
                 {renderGroupedItems(suggestedItems, false, true)}
               </div>
             )}
+
+            {replenishmentSuggestions.length > 0 && (
+              <div className="pt-8 border-t border-gray-200">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-bold text-blue-900 flex items-center gap-2">
+                     <Sparkles className="w-5 h-5 text-blue-600 animate-pulse" />
+                     Replenishment Suggestions
+                  </h2>
+                </div>
+                <p className="text-xs text-gray-500 -mt-2 mb-4">
+                  Staple items predicted to be out of stock soon based on your purchase frequency. Click "Add to List" to restock.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {replenishmentSuggestions.map(({ item, meanInterval, daysSince }) => (
+                    <div 
+                      key={`replenish-${item.id}`} 
+                      className="bg-white border border-blue-100 hover:border-blue-300 p-4 rounded-xl shadow-sm flex flex-col justify-between gap-3 transition-all"
+                    >
+                      <div>
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="font-bold text-gray-900 text-sm truncate" title={item.name}>{item.name}</span>
+                          <Badge className="bg-blue-50 text-blue-700 hover:bg-blue-50 border border-blue-100 text-[10px] capitalize shrink-0">
+                            {item.category}
+                          </Badge>
+                        </div>
+                        <div className="mt-2 space-y-1 text-xs text-gray-500">
+                          <p>Purchased every <span className="font-semibold text-gray-700">{meanInterval} days</span> on average</p>
+                          <p>Last purchased <span className="font-semibold text-gray-700">{daysSince} days ago</span></p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex gap-2">
+                        <Button 
+                          onClick={() => updateQuantities(item, 0, 1)} 
+                          className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs h-8 font-semibold rounded-lg shadow-sm"
+                        >
+                          Add to List
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-gray-400 hover:text-gray-600 hover:bg-gray-50 shrink-0 border border-gray-100 rounded-lg"
+                          onClick={async () => {
+                            await updateDoc(doc(db, "lists", activeListId!, "items", item.id!), {
+                              isHiddenSuggestion: true,
+                              updatedAt: serverTimestamp()
+                            });
+                          }}
+                          title="Dismiss suggestion"
+                        >
+                          <EyeOff className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </TabsContent>
           <TabsContent value="inventory" className="focus-visible:outline-none">
             <div className="w-full bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 p-3 sm:p-4 rounded-xl mb-6 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -2187,6 +2457,43 @@ export default function App() {
                 Scan Receipt
               </Button>
             </div>
+
+            {expiredOrSoonItems.length > 0 && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 shadow-sm space-y-3">
+                <div className="flex items-center gap-2 text-red-800 font-bold">
+                  <AlertTriangle className="w-5 h-5 text-red-600 animate-bounce" />
+                  <span>Expiry Warning: {expiredOrSoonItems.length} {expiredOrSoonItems.length === 1 ? 'item' : 'items'} need attention</span>
+                </div>
+                <p className="text-xs text-red-700 -mt-1">
+                  The following items in your pantry are expired or will expire within the next 3 days. Click any item to view or edit details.
+                </p>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {expiredOrSoonItems.map(item => {
+                    const isExpired = (item.inventoryEntries || []).some(e => getExpiryStatus(e.expiryDate) === 'expired');
+                    return (
+                      <button
+                        key={`expiry-alert-${item.id}`}
+                        onClick={() => {
+                          setEditingItem(item);
+                          setIsDialogOpen(true);
+                        }}
+                        className={`text-xs px-2.5 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-colors border shadow-sm ${
+                          isExpired 
+                            ? 'bg-red-100 hover:bg-red-200 border-red-300 text-red-800' 
+                            : 'bg-amber-100 hover:bg-amber-200 border-amber-300 text-amber-800'
+                        }`}
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
+                        <span className="max-w-[120px] truncate">{item.name}</span>
+                        <span className="text-[10px] opacity-80 uppercase tracking-wider font-bold">
+                          {isExpired ? 'Expired' : 'Soon'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {items.filter(item => (item.unprocessedQuantity || 0) > 0).length > 0 && (
               <div className="bg-orange-50/50 border border-orange-200 rounded-xl p-3 sm:p-5 mb-6 sm:mb-8 animate-in fade-in slide-in-from-top-4 duration-500">
@@ -2325,6 +2632,163 @@ export default function App() {
               </Button>
             </div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isSettingsOpen && currentList && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsSettingsOpen(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+            />
+            {/* Modal Box */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              transition={{ duration: 0.2 }}
+              className="bg-white rounded-2xl shadow-2xl border border-gray-100 w-full max-w-md p-6 relative z-10 space-y-6 animate-in zoom-in-95 duration-200"
+            >
+              <div className="flex justify-between items-center pb-2 border-b border-gray-100">
+                <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                  <Users className="w-5 h-5 text-blue-600" />
+                  Household Settings
+                </h3>
+                <button
+                  onClick={() => setIsSettingsOpen(false)}
+                  className="p-1 rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Rename List Section */}
+              {currentList.owner === user?.uid ? (
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Household List Name</label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="text"
+                      value={newListName}
+                      onChange={(e) => setNewListName(e.target.value)}
+                      placeholder="Rename household..."
+                      className="flex-1"
+                    />
+                    <Button 
+                      onClick={handleRenameList}
+                      disabled={!newListName.trim() || newListName.trim() === currentList.name}
+                      className="bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-sm"
+                    >
+                      Save
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Household List</span>
+                  <div className="font-semibold text-gray-800 text-lg bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                    {currentList.name}
+                  </div>
+                </div>
+              )}
+
+              {/* Members List Section */}
+              <div className="space-y-3">
+                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Members & Participants</span>
+                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                  {currentList.members?.map(memberId => {
+                    const isCurrentUser = memberId === user?.uid;
+                    const profile = isCurrentUser
+                      ? {
+                          displayName: user?.displayName || user?.email?.split('@')[0] || "You",
+                          email: user?.email || "",
+                          photoURL: user?.photoURL || undefined
+                        }
+                      : memberProfiles[memberId];
+                    const isOwner = currentList.owner === memberId;
+                    const isLoading = loadingProfiles && !profile;
+                    
+                    const displayName = profile?.displayName 
+                      ? profile.displayName 
+                      : isLoading 
+                        ? "Loading..." 
+                        : isCurrentUser 
+                          ? "You" 
+                          : `Member (${memberId.slice(0, 6)})`;
+                    const email = profile?.email || (isCurrentUser ? user?.email : "") || "";
+
+                    return (
+                      <div key={memberId} className="flex items-center justify-between p-2 rounded-xl hover:bg-gray-50/70 border border-gray-100/50 transition-colors">
+                        <div className="flex items-center gap-3 min-w-0">
+                          {profile?.photoURL ? (
+                            <img
+                              src={profile.photoURL}
+                              referrerPolicy="no-referrer"
+                              alt={displayName}
+                              className="w-8 h-8 rounded-full object-cover shadow-inner bg-gray-100"
+                            />
+                          ) : (
+                            <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 font-bold flex items-center justify-center text-xs shadow-inner">
+                              {displayName.charAt(0).toUpperCase()}
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm font-semibold text-gray-900 truncate">
+                                {displayName}
+                              </span>
+                              {isOwner && (
+                                <Badge className="bg-blue-50 text-blue-700 hover:bg-blue-50 border border-blue-100 text-[9px] px-1.5 py-0 h-4">
+                                  Owner
+                                </Badge>
+                              )}
+                              {isCurrentUser && (
+                                <Badge className="bg-gray-100 text-gray-700 hover:bg-gray-100 border border-gray-200 text-[9px] px-1.5 py-0 h-4">
+                                  You
+                                </Badge>
+                              )}
+                            </div>
+                            {email && (
+                              <span className="text-xs text-gray-400 block truncate">{email}</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Kick Button */}
+                        {currentList.owner === user?.uid && !isOwner && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleKickMember(memberId)}
+                            className="text-red-500 hover:text-red-700 hover:bg-red-50 text-xs font-semibold rounded-lg h-8 transition-colors"
+                          >
+                            Remove
+                          </Button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Leave List Button */}
+              {currentList.owner !== user?.uid && (
+                <div className="pt-2 border-t border-gray-100">
+                  <Button
+                    onClick={handleLeaveList}
+                    className="w-full bg-red-50 border border-red-200 hover:bg-red-100 text-red-700 hover:text-red-800 text-sm font-semibold py-2 rounded-xl flex items-center justify-center gap-2 transition-all"
+                  >
+                    Leave Household List
+                  </Button>
+                </div>
+              )}
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 

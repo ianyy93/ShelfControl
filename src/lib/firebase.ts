@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer, setDoc, serverTimestamp } from 'firebase/firestore';
+import { getAuth, GoogleAuthProvider, signInWithPopup, User } from 'firebase/auth';
+import { getFirestore, doc, getDocFromServer, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 export interface FirestoreErrorInfo {
@@ -98,13 +98,59 @@ export interface UserProfile {
 
 export const getUserProfiles = async (uids: string[]): Promise<Record<string, UserProfile>> => {
   if (uids.length === 0) return {};
-  const { getDocs, collection, query, where } = await import('firebase/firestore');
-  // Firestore 'in' queries support up to 30 items — lists have max 20 members, so this is safe
-  const q = query(collection(db, 'users'), where('__name__', 'in', uids));
-  const snap = await getDocs(q);
-  const result: Record<string, UserProfile> = {};
-  snap.forEach(d => {
-    result[d.id] = d.data() as UserProfile;
-  });
-  return result;
+  try {
+    const results = await Promise.all(
+      uids.map(async (uid) => {
+        try {
+          const snap = await getDoc(doc(db, 'users', uid));
+          if (snap.exists()) {
+            return { uid, profile: snap.data() as UserProfile };
+          }
+        } catch (err) {
+          console.error(`Error getting profile for ${uid}:`, err);
+        }
+        return { uid, profile: null };
+      })
+    );
+    const result: Record<string, UserProfile> = {};
+    results.forEach(({ uid, profile }) => {
+      if (profile) {
+        result[uid] = profile;
+      }
+    });
+    return result;
+  } catch (error) {
+    handleFirestoreError(error, 'get', 'users');
+    return {};
+  }
+};
+
+export const syncUserProfile = async (user: User) => {
+  try {
+    const profileRef = doc(db, "users", user.uid);
+    const snap = await getDoc(profileRef);
+    if (!snap.exists()) {
+      await setDoc(profileRef, {
+        displayName: user.displayName || user.email?.split('@')[0] || "User",
+        email: user.email || "",
+        photoURL: user.photoURL || "",
+        createdAt: serverTimestamp(),
+      });
+      console.log("Created user profile for:", user.uid);
+    } else {
+      const data = snap.data();
+      const needsUpdate = !data.displayName || !data.email || data.photoURL !== (user.photoURL || "");
+      if (needsUpdate) {
+        await setDoc(profileRef, {
+          displayName: user.displayName || data.displayName || user.email?.split('@')[0] || "User",
+          email: user.email || data.email || "",
+          photoURL: user.photoURL || data.photoURL || "",
+          createdAt: data.createdAt || serverTimestamp(),
+        }, { merge: true });
+        console.log("Updated user profile for:", user.uid);
+      }
+    }
+  } catch (error) {
+    console.error("Error syncing user profile:", error);
+  }
 };
