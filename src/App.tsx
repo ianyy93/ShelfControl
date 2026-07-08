@@ -245,9 +245,6 @@ export default function App() {
 
     const q = query(collection(db, "lists"), where("members", "array-contains", user.uid));
     const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
-      // Avoid a race condition where querying children of a purely local Document fails backend rules.
-      if (snapshot.metadata.hasPendingWrites) return;
-      
       const dbLists: GroceryList[] = [];
       snapshot.forEach((doc) => {
         dbLists.push({ id: doc.id, ...doc.data() } as GroceryList);
@@ -286,9 +283,6 @@ export default function App() {
 
     const q = query(collection(db, "lists", activeListId, "items"));
     const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
-      // Ignore initial optimistic response if the parent document might still be inflight
-      if (snapshot.metadata.hasPendingWrites) return;
-      
       const dbItems: GroceryItem[] = [];
       snapshot.forEach((doc) => {
         dbItems.push({ id: doc.id, ...doc.data() } as GroceryItem);
