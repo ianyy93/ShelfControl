@@ -53,14 +53,15 @@ app.post("/api/receipt/scan", async (req, res) => {
       },
     };
 
+    const currentDate = new Date().toISOString().split("T")[0];
     const promptText = `Analyze this receipt or invoice and extract all purchased grocery and household items. 
 For each item, determine:
 - A clean, friendly item name (e.g., "Organic Apples", "Whole Milk").
-- The quantity purchased.
-- The unit of measurement (e.g. "pcs", "g", "kg", "mL", "L", or empty if count).
+- The quantity purchased. Since the user wants to count items (including meat, seafood, and produce) by pieces ('pcs') rather than weight, estimate or extract the piece count for the quantity.
+- The unit of measurement. NEVER use weight units (such as 'kg', 'g', 'lb', 'lbs', 'oz'). Instead, always use 'pcs' as the unit for count/pieces. For liquids, you may still use volume units ('mL', 'L') if appropriate, but for solid items, meat, and produce, always use 'pcs'.
 - The best category (must be exactly one of: Produce, Dairy & Eggs, Meat & Seafood, Pantry, Frozen, Beverages, Snacks, Household, Dog Supplies, Other).
 - The total price paid for that item.
-Also extract the merchant/store name and the receipt date in YYYY-MM-DD format if visible.`;
+Also extract the merchant/store name and the receipt date in YYYY-MM-DD format if visible. The current date is ${currentDate}. If the year is ambiguous or 2 digits, resolve it to be closest to the current date, but not a future date.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3.5-flash",
@@ -95,7 +96,7 @@ Also extract the merchant/store name and the receipt date in YYYY-MM-DD format i
                   },
                   unit: {
                     type: Type.STRING,
-                    description: "Standard unit (e.g., pcs, g, kg, mL, L, pack, or empty if count/pieces)."
+                    description: "Standard unit. NEVER use weight units (like kg, g, lb, lbs, oz) for meat, seafood, or produce; always use 'pcs' as the unit for solid items."
                   },
                   category: {
                     type: Type.STRING,

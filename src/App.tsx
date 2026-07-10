@@ -14,7 +14,7 @@ import { ItemDialog } from "./components/ItemDialog";
 import { CheckOffDialog } from "./components/CheckOffDialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { ReceiptScanDialog } from "./components/ReceiptScanDialog";
-import { Sparkles, Receipt } from "lucide-react";
+import { Sparkles, Receipt, GitMerge } from "lucide-react";
 import { Badge } from "./components/ui/badge";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "./components/ui/accordion";
 import { LineChart as RechartsLineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
@@ -194,6 +194,27 @@ export default function App() {
      return Array.from(st).sort();
   }, [items]);
 
+  const duplicates = useMemo(() => {
+    const nameMap = new Map<string, GroceryItem[]>();
+    items.forEach(item => {
+      if (item.isHiddenSuggestion) return;
+      const key = item.name.toLowerCase().trim();
+      if (!nameMap.has(key)) {
+        nameMap.set(key, []);
+      }
+      nameMap.get(key)!.push(item);
+    });
+    
+    const dupList: { name: string; items: GroceryItem[] }[] = [];
+    nameMap.forEach((matchedItems, name) => {
+      if (matchedItems.length > 1) {
+        const displayName = matchedItems.find(i => i.name)?.name || name;
+        dupList.push({ name: displayName, items: matchedItems });
+      }
+    });
+    return dupList;
+  }, [items]);
+
   useEffect(() => {
     console.log("onAuthStateChanged listener attached");
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -332,14 +353,72 @@ export default function App() {
           }
         }
 
-        await updateDoc(doc(db, "lists", activeListId, "items", editingItem.id), removeUndefined(updateData));
-        if (originalItem) {
-          setLastAction({
-            type: 'update',
-            itemId: editingItem.id,
-            itemData: originalItem,
-            description: `Saved "${editingItem.name}"`
-          });
+        const existingMatch = items.find(i => 
+          i.id !== editingItem.id && 
+          i.name.toLowerCase().trim() === updatedFields.name?.toLowerCase().trim()
+        );
+
+        if (existingMatch && existingMatch.id) {
+          const combinedEntries = [...(existingMatch.inventoryEntries || []), ...(updatedFields.inventoryEntries || editingItem.inventoryEntries || [])];
+          const combinedLocs = Array.from(new Set(combinedEntries.map(e => e.location).filter(Boolean)));
+          
+          const combinedPriceHistory = [...(existingMatch.priceHistory || []), ...(editingItem.priceHistory || [])];
+          if (newPriceEntry) {
+            combinedPriceHistory.push({
+              ...newPriceEntry,
+              id: crypto.randomUUID()
+            });
+          } else if (editedPriceEntry) {
+            const index = combinedPriceHistory.findIndex(e => e.id === editedPriceEntry.id);
+            if (index !== -1) {
+              combinedPriceHistory[index] = editedPriceEntry;
+            } else {
+              combinedPriceHistory.push(editedPriceEntry);
+            }
+          } else if (deletedPriceEntryId) {
+            const filtered = combinedPriceHistory.filter(e => e.id !== deletedPriceEntryId);
+            combinedPriceHistory.length = 0;
+            combinedPriceHistory.push(...filtered);
+          }
+
+          const combinedUnprocessed = (existingMatch.unprocessedQuantity || 0) + 
+            (processQuantity !== undefined ? Math.max(0, (editingItem.unprocessedQuantity || 0) - processQuantity) : (editingItem.unprocessedQuantity || 0));
+
+          const mergeUpdate: Partial<GroceryItem> = {
+            category: updatedFields.category || existingMatch.category,
+            shoppingQuantity: (existingMatch.shoppingQuantity || 0) + (updatedFields.shoppingQuantity !== undefined ? Number(updatedFields.shoppingQuantity) : (editingItem.shoppingQuantity || 0)),
+            inventoryQuantity: combinedEntries.reduce((sum, e) => sum + (Number(e.quantity) || 0), 0),
+            inventoryEntries: combinedEntries,
+            locations: combinedLocs,
+            notes: [existingMatch.notes, updatedFields.notes || editingItem.notes].filter(Boolean).join("\n"),
+            unit: updatedFields.unit || existingMatch.unit || editingItem.unit,
+            priceHistory: combinedPriceHistory,
+            unprocessedQuantity: combinedUnprocessed > 0 ? combinedUnprocessed : undefined,
+            isHiddenSuggestion: false,
+            updatedAt: serverTimestamp()
+          };
+
+          await updateDoc(doc(db, "lists", activeListId, "items", existingMatch.id), removeUndefined(mergeUpdate));
+          await deleteDoc(doc(db, "lists", activeListId, "items", editingItem.id));
+          
+          if (originalItem) {
+            setLastAction({
+              type: 'update',
+              itemId: existingMatch.id,
+              itemData: originalItem,
+              description: `Merged "${editingItem.name}" into "${existingMatch.name}"`
+            });
+          }
+        } else {
+          await updateDoc(doc(db, "lists", activeListId, "items", editingItem.id), removeUndefined(updateData));
+          if (originalItem) {
+            setLastAction({
+              type: 'update',
+              itemId: editingItem.id,
+              itemData: originalItem,
+              description: `Saved "${editingItem.name}"`
+            });
+          }
         }
       } else {
         const existingMatch = items.find(i => i.name.toLowerCase().trim() === updatedFields.name?.toLowerCase().trim());
@@ -403,6 +482,50 @@ export default function App() {
     } catch (error) {
       console.error("Error saving item:", error);
       handleFirestoreError(error, editingItem?.id ? 'update' : 'create', `lists/${activeListId}/items`);
+    }
+  };
+
+  const handleMergeDuplicate = async (dupName: string, duplicateList: GroceryItem[]) => {
+    if (!user || !activeListId || duplicateList.length < 2) return;
+    
+    const target = duplicateList[0];
+    const sourceItems = duplicateList.slice(1);
+    
+    try {
+      const mergedEntries = duplicateList.flatMap(i => i.inventoryEntries || []);
+      const mergedInventoryQuantity = mergedEntries.reduce((sum, e) => sum + (Number(e.quantity) || 0), 0);
+      const mergedShoppingQuantity = duplicateList.reduce((sum, i) => sum + (Number(i.shoppingQuantity) || 0), 0);
+      const mergedLocs = Array.from(new Set(mergedEntries.map(e => e.location).filter(Boolean)));
+      const mergedNotes = duplicateList.map(i => i.notes?.trim()).filter(Boolean).join("\n");
+      const mergedPriceHistory = duplicateList.flatMap(i => i.priceHistory || []);
+      const mergedUnprocessed = duplicateList.reduce((sum, i) => sum + (Number(i.unprocessedQuantity) || 0), 0);
+      
+      const mergedData: Partial<GroceryItem> = {
+        inventoryEntries: mergedEntries,
+        inventoryQuantity: mergedInventoryQuantity,
+        shoppingQuantity: mergedShoppingQuantity,
+        locations: mergedLocs,
+        notes: mergedNotes,
+        priceHistory: mergedPriceHistory,
+        unprocessedQuantity: mergedUnprocessed > 0 ? mergedUnprocessed : undefined,
+        updatedAt: serverTimestamp()
+      };
+      
+      await updateDoc(doc(db, "lists", activeListId, "items", target.id!), removeUndefined(mergedData));
+      
+      for (const source of sourceItems) {
+        await deleteDoc(doc(db, "lists", activeListId, "items", source.id!));
+      }
+      
+      setLastAction({
+        type: 'update',
+        itemId: target.id!,
+        itemData: target,
+        description: `Successfully merged all duplicate entries of "${dupName}"`
+      });
+    } catch (error) {
+      console.error("Error merging duplicate items:", error);
+      alert("Failed to merge duplicate items.");
     }
   };
 
@@ -2358,6 +2481,53 @@ export default function App() {
             </TabsTrigger>
           </TabsList>
           </div>
+
+          {duplicates.length > 0 && (
+             <div className="bg-amber-50/75 border border-amber-200/85 rounded-xl p-4 mb-6 shadow-sm space-y-3 animate-in fade-in slide-in-from-top-2">
+               <div className="flex items-center justify-between gap-4">
+                 <div className="flex items-center gap-2.5 text-amber-800 font-bold">
+                   <GitMerge className="w-5 h-5 text-amber-600" />
+                   <span>Duplicate items detected</span>
+                 </div>
+                 <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider">
+                   {duplicates.length} {duplicates.length === 1 ? 'pair' : 'pairs'}
+                 </span>
+               </div>
+               <p className="text-xs text-amber-700">
+                 We found multiple separate item records with the exact same name (likely due to corrected spellings or imports). Merge them to combine their quantities, inventory entries, price history, and notes.
+               </p>
+               <div className="flex flex-col gap-2 pt-1">
+                 {duplicates.map(dup => {
+                   const totalInv = dup.items.reduce((sum, i) => sum + (i.inventoryQuantity || 0), 0);
+                   const totalShop = dup.items.reduce((sum, i) => sum + (i.shoppingQuantity || 0), 0);
+                   return (
+                     <div key={`dup-banner-${dup.name}`} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-white/90 rounded-lg border border-amber-100 shadow-sm">
+                       <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                         <span className="font-semibold text-gray-900 text-sm">{dup.name}</span>
+                         <div className="flex items-center gap-1.5">
+                           <Badge variant="outline" className="text-[10px] border-amber-200 text-amber-800 px-1.5 py-0 bg-amber-50">
+                             {dup.items.length} copies
+                           </Badge>
+                           <span className="text-xs text-gray-500">
+                             (Combined: {totalInv} in stock, {totalShop} to buy)
+                           </span>
+                         </div>
+                       </div>
+                       <Button 
+                         size="sm" 
+                         variant="secondary"
+                         onClick={() => handleMergeDuplicate(dup.name, dup.items)}
+                         className="h-8 text-xs bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-200/50 self-end sm:self-center font-semibold shrink-0 gap-1"
+                       >
+                         <GitMerge className="w-3.5 h-3.5" />
+                         Merge Items
+                       </Button>
+                     </div>
+                   );
+                 })}
+               </div>
+             </div>
+          )}
 
           <TabsContent value="shopping" className="focus-visible:outline-none space-y-12">
             {renderControls()}

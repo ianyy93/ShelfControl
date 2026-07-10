@@ -206,14 +206,22 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
       const data = await response.json();
       
       // Map parsed items
-      const items: ParsedItem[] = (data.items || []).map((item: any, idx: number) => ({
-        id: `parsed-${idx}-${Date.now()}`,
-        name: item.name || "Unknown Item",
-        quantity: item.quantity || 1,
-        unit: item.unit || "",
-        category: (CATEGORIES.includes(item.category) ? item.category : "Other") as Category,
-        price: item.price !== undefined ? Number(item.price) : undefined,
-      }));
+      const items: ParsedItem[] = (data.items || []).map((item: any, idx: number) => {
+        let unit = item.unit || "pcs";
+        const lowerUnit = unit.toLowerCase().trim();
+        // If it got weight units anyway, convert them to pcs as per user preference
+        if (["kg", "g", "lb", "lbs", "oz", "ounce", "ounces", "gram", "grams", "kilo", "kilograms", "kilogram"].includes(lowerUnit)) {
+          unit = "pcs";
+        }
+        return {
+          id: `parsed-${idx}-${Date.now()}`,
+          name: item.name || "Unknown Item",
+          quantity: item.quantity || 1,
+          unit: unit,
+          category: (CATEGORIES.includes(item.category) ? item.category : "Other") as Category,
+          price: item.price !== undefined ? Number(item.price) : undefined,
+        };
+      });
 
       setParsedStore(data.store || "");
       setParsedDate(data.dateBought || new Date().toISOString().split("T")[0]);
