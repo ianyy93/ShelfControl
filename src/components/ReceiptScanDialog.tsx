@@ -57,6 +57,9 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
   const [parsedItems, setParsedItems] = useState<ParsedItem[]>([]);
   const [isParsed, setIsParsed] = useState(false);
   const [activeFocusItemId, setActiveFocusItemId] = useState<string | null>(null);
+  const [dateBoughtAmbiguous, setDateBoughtAmbiguous] = useState(false);
+  const [dateAssumptionMade, setDateAssumptionMade] = useState("");
+  const [isDateConfirmed, setIsDateConfirmed] = useState(false);
 
   // Helper to find exact or fuzzy match from existing items
   const getMatchedExistingItem = (name: string) => {
@@ -179,6 +182,9 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
     setError(null);
     setLoadingStep(0);
     setIsParsed(false);
+    setDateBoughtAmbiguous(false);
+    setDateAssumptionMade("");
+    setIsDateConfirmed(false);
 
     // Rotate loading messages
     stepIntervalRef.current = setInterval(() => {
@@ -223,8 +229,39 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
         };
       });
 
+      // Robust client-side sanitization of dateBought to avoid HTML5 date input pattern crashes
+      let finalDate = data.dateBought || "";
+      if (finalDate) {
+        const clean = String(finalDate).trim();
+        const match = clean.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+        if (match) {
+          finalDate = `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
+        } else {
+          const altMatch = clean.match(/(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+          if (altMatch) {
+            const part1 = altMatch[1];
+            const part2 = altMatch[2];
+            const year = altMatch[3];
+            let month = part1;
+            let day = part2;
+            if (parseInt(part1) > 12) {
+              day = part1;
+              month = part2;
+            }
+            finalDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+          } else {
+            finalDate = new Date().toISOString().split("T")[0];
+          }
+        }
+      } else {
+        finalDate = new Date().toISOString().split("T")[0];
+      }
+
       setParsedStore(data.store || "");
-      setParsedDate(data.dateBought || new Date().toISOString().split("T")[0]);
+      setParsedDate(finalDate);
+      setDateBoughtAmbiguous(!!data.dateBoughtAmbiguous);
+      setDateAssumptionMade(data.dateAssumptionMade || "");
+      setIsDateConfirmed(!data.dateBoughtAmbiguous);
       setParsedItems(items);
       setIsParsed(true);
     } catch (err: any) {
@@ -401,17 +438,64 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <Calendar className="w-3.5 h-3.5 text-gray-500" /> Date Bought
+                    <Label className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Calendar className="w-3.5 h-3.5 text-gray-500" /> Date Bought
+                      </span>
+                      {(dateBoughtAmbiguous || dateAssumptionMade) && (
+                        isDateConfirmed ? (
+                          <span className="text-[10px] text-green-600 font-bold flex items-center gap-0.5">
+                            <Check className="w-3 h-3" /> Confirmed
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-amber-600 font-bold flex items-center gap-0.5 animate-pulse">
+                            ⚠️ Unconfirmed
+                          </span>
+                        )
+                      )}
                     </Label>
                     <Input
                       type="date"
                       value={parsedDate}
-                      onChange={(e) => setParsedDate(e.target.value)}
-                      className="bg-white h-9"
+                      onChange={(e) => {
+                        setParsedDate(e.target.value);
+                        setIsDateConfirmed(true);
+                      }}
+                      className={`bg-white h-9 transition-all ${
+                        (dateBoughtAmbiguous || dateAssumptionMade) && !isDateConfirmed
+                          ? "border-amber-300 focus-visible:ring-amber-500 focus-visible:border-amber-500 bg-amber-50/20 shadow-sm"
+                          : ""
+                      }`}
                     />
                   </div>
                 </div>
+
+                {/* Date bought confirmation warning/alert */}
+                {(dateBoughtAmbiguous || dateAssumptionMade) && !isDateConfirmed && (
+                  <div className="bg-amber-50 border border-amber-200/80 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm animate-in fade-in slide-in-from-top-2">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 text-amber-800 font-bold text-sm">
+                        <Calendar className="w-4 h-4 text-amber-600" />
+                        <span>Confirm Receipt Date</span>
+                      </div>
+                      <p className="text-xs text-amber-700 leading-relaxed">
+                        {dateAssumptionMade || "The receipt date was ambiguous, so Gemini selected the date closest to today that is not in the future."}
+                      </p>
+                      <p className="text-xs font-semibold text-amber-900 mt-1">
+                        Assumed date: <span className="bg-amber-100 border border-amber-200/40 px-1.5 py-0.5 rounded text-xs">{parsedDate || "Not found"}</span>
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => setIsDateConfirmed(true)}
+                      className="bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs h-8 shrink-0 self-end sm:self-center gap-1 shadow-sm"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      Confirm Date
+                    </Button>
+                  </div>
+                )}
 
                 {/* Items list */}
                 <div className="space-y-3">

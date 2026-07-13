@@ -61,7 +61,7 @@ For each item, determine:
 - The unit of measurement. NEVER use weight units (such as 'kg', 'g', 'lb', 'lbs', 'oz'). Instead, always use 'pcs' as the unit for count/pieces. For liquids, you may still use volume units ('mL', 'L') if appropriate, but for solid items, meat, and produce, always use 'pcs'.
 - The best category (must be exactly one of: Produce, Dairy & Eggs, Meat & Seafood, Pantry, Frozen, Beverages, Snacks, Household, Dog Supplies, Other).
 - The total price paid for that item.
-Also extract the merchant/store name and the receipt date in YYYY-MM-DD format if visible. The current date is ${currentDate}. If the year is ambiguous or 2 digits, resolve it to be closest to the current date, but not a future date.`;
+Also extract the merchant/store name and the receipt date in YYYY-MM-DD format if visible. The current date is ${currentDate}. If the year is ambiguous or 2 digits (e.g. '05-07-26' could be 2005-07-26 or 2026-07-05 depending on whether it is interpreted as YY-MM-DD or DD-MM-YY), make an assumption to resolve it to be closest to the current date (${currentDate}), but not a future date. Mark 'dateBoughtAmbiguous' as true if such an ambiguity exists, and explain the assumption and alternate possible dates in 'dateAssumptionMade'.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3.5-flash",
@@ -79,6 +79,14 @@ Also extract the merchant/store name and the receipt date in YYYY-MM-DD format i
             dateBought: {
               type: Type.STRING,
               description: "Date on the receipt in YYYY-MM-DD format. Leave empty if unknown."
+            },
+            dateBoughtAmbiguous: {
+              type: Type.BOOLEAN,
+              description: "True if the date format or year on the receipt was ambiguous (e.g. could be interpreted as multiple years, or multiple date layouts)."
+            },
+            dateAssumptionMade: {
+              type: Type.STRING,
+              description: "Short explanation of the assumption made to resolve the ambiguous date (e.g., 'Assumed 2026-07-05 instead of 2005-07-26 because it is closer to today and not in the future.')."
             },
             items: {
               type: Type.ARRAY,
@@ -122,6 +130,37 @@ Also extract the merchant/store name and the receipt date in YYYY-MM-DD format i
     }
 
     const parsedData = JSON.parse(textOutput.trim());
+
+    // Validate and sanitize the dateBought on backend to ensure strict YYYY-MM-DD or empty
+    if (parsedData.dateBought) {
+      const rawDate = String(parsedData.dateBought).trim();
+      const match = rawDate.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+      if (match) {
+        const y = match[1];
+        const m = match[2].padStart(2, '0');
+        const d = match[3].padStart(2, '0');
+        parsedData.dateBought = `${y}-${m}-${d}`;
+      } else {
+        const altMatch = rawDate.match(/(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+        if (altMatch) {
+          const part1 = altMatch[1];
+          const part2 = altMatch[2];
+          const y = altMatch[3];
+          let m = part1;
+          let d = part2;
+          if (parseInt(part1) > 12) {
+            d = part1;
+            m = part2;
+          }
+          parsedData.dateBought = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+        } else {
+          parsedData.dateBought = "";
+        }
+      }
+    } else {
+      parsedData.dateBought = "";
+    }
+
     res.json(parsedData);
   } catch (error: any) {
     console.error("Receipt processing failed:", error);
