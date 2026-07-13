@@ -61,7 +61,7 @@ For each item, determine:
 - The unit of measurement. NEVER use weight units (such as 'kg', 'g', 'lb', 'lbs', 'oz'). Instead, always use 'pcs' as the unit for count/pieces. For liquids, you may still use volume units ('mL', 'L') if appropriate, but for solid items, meat, and produce, always use 'pcs'.
 - The best category (must be exactly one of: Produce, Dairy & Eggs, Meat & Seafood, Pantry, Frozen, Beverages, Snacks, Household, Dog Supplies, Other).
 - The total price paid for that item.
-Also extract the merchant/store name and the receipt date in YYYY-MM-DD format if visible. The current date is ${currentDate}. If the year is ambiguous or 2 digits (e.g. '05-07-26' could be 2005-07-26 or 2026-07-05 depending on whether it is interpreted as YY-MM-DD or DD-MM-YY), make an assumption to resolve it to be closest to the current date (${currentDate}), but not a future date. Mark 'dateBoughtAmbiguous' as true if such an ambiguity exists, and explain the assumption and alternate possible dates in 'dateAssumptionMade'.`;
+Also extract the merchant/store name and the receipt date in YYYY-MM-DD format if visible.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3.5-flash",
@@ -79,14 +79,6 @@ Also extract the merchant/store name and the receipt date in YYYY-MM-DD format i
             dateBought: {
               type: Type.STRING,
               description: "Date on the receipt in YYYY-MM-DD format. Leave empty if unknown."
-            },
-            dateBoughtAmbiguous: {
-              type: Type.BOOLEAN,
-              description: "True if the date format or year on the receipt was ambiguous (e.g. could be interpreted as multiple years, or multiple date layouts)."
-            },
-            dateAssumptionMade: {
-              type: Type.STRING,
-              description: "Short explanation of the assumption made to resolve the ambiguous date (e.g., 'Assumed 2026-07-05 instead of 2005-07-26 because it is closer to today and not in the future.')."
             },
             items: {
               type: Type.ARRAY,
@@ -130,6 +122,7 @@ Also extract the merchant/store name and the receipt date in YYYY-MM-DD format i
     }
 
     const parsedData = JSON.parse(textOutput.trim());
+    console.log("Raw Gemini Output:", JSON.stringify(parsedData, null, 2));
 
     // Validate and sanitize the dateBought on backend to ensure strict YYYY-MM-DD or empty
     if (parsedData.dateBought) {
@@ -138,32 +131,7 @@ Also extract the merchant/store name and the receipt date in YYYY-MM-DD format i
       
       const match = rawDate.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
       if (match) {
-        const y = parseInt(match[1]);
-        const m = parseInt(match[2]);
-        const d = parseInt(match[3]);
-        
-        const currentYear = new Date().getFullYear();
-        
-        // If the parsed year is suspiciously far in the past (e.g. 2005 when current is 2026) 
-        // and the 'day' could be the current year (e.g. 26 -> 2026)
-        if (y < currentYear - 5 && d >= 0 && d <= 99) {
-           const possibleYear = 2000 + d;
-           if (possibleYear === currentYear || possibleYear === currentYear - 1) {
-              // It's highly likely it was a YY-MM-DD vs DD-MM-YY mixup.
-              // We'll treat the 'y' as the day or month, 'm' as the other, and 'd' as the year.
-              // E.g. '2005-07-26' -> y=2005, m=7, d=26. Real date is 2026-07-05.
-              const realY = possibleYear;
-              const realM = m;
-              const realD = y % 100;
-              finalDate = `${realY}-${String(realM).padStart(2, '0')}-${String(realD).padStart(2, '0')}`;
-              parsedData.dateBoughtAmbiguous = true;
-              parsedData.dateAssumptionMade = `Backend auto-corrected suspicious old date ${rawDate} to ${finalDate}.`;
-           } else {
-              finalDate = `${match[1]}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-           }
-        } else {
-          finalDate = `${match[1]}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-        }
+        finalDate = `${match[1]}-${String(match[2]).padStart(2, '0')}-${String(match[3]).padStart(2, '0')}`;
       } else {
         const altMatch = rawDate.match(/(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
         if (altMatch) {
@@ -180,6 +148,7 @@ Also extract the merchant/store name and the receipt date in YYYY-MM-DD format i
         }
       }
       
+      console.log(`Parsed date mapping: rawDate=${rawDate} -> finalDate=${finalDate}`);
       parsedData.dateBought = finalDate;
     } else {
       parsedData.dateBought = "";
