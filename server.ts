@@ -134,29 +134,53 @@ Also extract the merchant/store name and the receipt date in YYYY-MM-DD format i
     // Validate and sanitize the dateBought on backend to ensure strict YYYY-MM-DD or empty
     if (parsedData.dateBought) {
       const rawDate = String(parsedData.dateBought).trim();
+      let finalDate = "";
+      
       const match = rawDate.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
       if (match) {
-        const y = match[1];
-        const m = match[2].padStart(2, '0');
-        const d = match[3].padStart(2, '0');
-        parsedData.dateBought = `${y}-${m}-${d}`;
+        const y = parseInt(match[1]);
+        const m = parseInt(match[2]);
+        const d = parseInt(match[3]);
+        
+        const currentYear = new Date().getFullYear();
+        
+        // If the parsed year is suspiciously far in the past (e.g. 2005 when current is 2026) 
+        // and the 'day' could be the current year (e.g. 26 -> 2026)
+        if (y < currentYear - 5 && d >= 0 && d <= 99) {
+           const possibleYear = 2000 + d;
+           if (possibleYear === currentYear || possibleYear === currentYear - 1) {
+              // It's highly likely it was a YY-MM-DD vs DD-MM-YY mixup.
+              // We'll treat the 'y' as the day or month, 'm' as the other, and 'd' as the year.
+              // E.g. '2005-07-26' -> y=2005, m=7, d=26. Real date is 2026-07-05.
+              const realY = possibleYear;
+              const realM = m;
+              const realD = y % 100;
+              finalDate = `${realY}-${String(realM).padStart(2, '0')}-${String(realD).padStart(2, '0')}`;
+              parsedData.dateBoughtAmbiguous = true;
+              parsedData.dateAssumptionMade = `Backend auto-corrected suspicious old date ${rawDate} to ${finalDate}.`;
+           } else {
+              finalDate = `${match[1]}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+           }
+        } else {
+          finalDate = `${match[1]}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        }
       } else {
         const altMatch = rawDate.match(/(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
         if (altMatch) {
-          const part1 = altMatch[1];
-          const part2 = altMatch[2];
-          const y = altMatch[3];
+          const part1 = parseInt(altMatch[1]);
+          const part2 = parseInt(altMatch[2]);
+          const y = parseInt(altMatch[3]);
           let m = part1;
           let d = part2;
-          if (parseInt(part1) > 12) {
+          if (part1 > 12) {
             d = part1;
             m = part2;
           }
-          parsedData.dateBought = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
-        } else {
-          parsedData.dateBought = "";
+          finalDate = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
         }
       }
+      
+      parsedData.dateBought = finalDate;
     } else {
       parsedData.dateBought = "";
     }

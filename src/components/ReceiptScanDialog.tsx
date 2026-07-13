@@ -237,21 +237,7 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
         if (match) {
           finalDate = `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
         } else {
-          const altMatch = clean.match(/(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
-          if (altMatch) {
-            const part1 = altMatch[1];
-            const part2 = altMatch[2];
-            const year = altMatch[3];
-            let month = part1;
-            let day = part2;
-            if (parseInt(part1) > 12) {
-              day = part1;
-              month = part2;
-            }
-            finalDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-          } else {
-            finalDate = new Date().toISOString().split("T")[0];
-          }
+          finalDate = new Date().toISOString().split("T")[0];
         }
       } else {
         finalDate = new Date().toISOString().split("T")[0];
