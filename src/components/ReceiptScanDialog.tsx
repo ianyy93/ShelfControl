@@ -33,6 +33,7 @@ interface ReceiptScanDialogProps {
     price?: number;
     store?: string;
     dateBought?: string;
+    expiryDate?: string;
   }>) => Promise<void>;
 }
 
@@ -43,6 +44,7 @@ interface ParsedItem {
   unit: string;
   category: Category;
   price?: number;
+  expiryDate?: string;
 }
 
 export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImport }: ReceiptScanDialogProps) {
@@ -200,7 +202,7 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
 
       if (!response.ok) {
         const errData = await response.json();
-        throw new Error(errData.error || "Failed to scan receipt");
+        throw new Error(errData.error + " | Details: " + JSON.stringify(errData.details));
       }
 
       const data = await response.json();
@@ -213,6 +215,18 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
         if (["kg", "g", "lb", "lbs", "oz", "ounce", "ounces", "gram", "grams", "kilo", "kilograms", "kilogram"].includes(lowerUnit)) {
           unit = "pcs";
         }
+        
+        let itemExpiry = item.expiryDate || "";
+        if (itemExpiry) {
+          const clean = String(itemExpiry).trim();
+          const match = clean.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+          if (match) {
+            itemExpiry = `${match[1]}-${String(match[2]).padStart(2, "0")}-${String(match[3]).padStart(2, "0")}`;
+          } else {
+            itemExpiry = "";
+          }
+        }
+
         return {
           id: `parsed-${idx}-${Date.now()}`,
           name: item.name || "Unknown Item",
@@ -220,6 +234,7 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
           unit: unit,
           category: (CATEGORIES.includes(item.category) ? item.category : "Other") as Category,
           price: item.price !== undefined ? Number(item.price) : undefined,
+          expiryDate: itemExpiry,
         };
       });
 
@@ -267,6 +282,7 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
       quantity: 1,
       unit: "pcs",
       category: "Produce",
+      expiryDate: "",
     };
     setParsedItems(prev => [...prev, newItem]);
   };
@@ -282,6 +298,7 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
           category: item.category,
           unit: item.unit,
           price: item.price,
+          expiryDate: item.expiryDate || undefined,
           store: parsedStore,
           dateBought: parsedDate,
         }));
@@ -470,7 +487,7 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-                          <div className="sm:col-span-5 space-y-1 relative">
+                          <div className="sm:col-span-3 space-y-1 relative">
                             <Label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
                               Item Name
                             </Label>
@@ -619,6 +636,20 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
                               }
                               placeholder="0.00"
                               className="h-8 text-sm"
+                            />
+                          </div>
+
+                          <div className="sm:col-span-2 space-y-1">
+                            <Label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">
+                              Expiry Date
+                            </Label>
+                            <Input
+                              type="date"
+                              value={item.expiryDate || ""}
+                              onChange={(e) =>
+                                handleUpdateItem(item.id, "expiryDate", e.target.value)
+                              }
+                              className="h-8 text-xs px-1.5"
                             />
                           </div>
                         </div>

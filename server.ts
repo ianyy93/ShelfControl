@@ -107,11 +107,11 @@ Also extract the merchant/store name and the receipt date in YYYY-MM-DD format i
                     description: "Total line price paid for this item."
                   }
                 },
-                required: ["name", "quantity", "category"]
+                required: ["name", "quantity", "unit", "category", "price"]
               }
             }
           },
-          required: ["items"]
+          required: ["store", "dateBought", "items"]
         }
       }
     });
@@ -156,8 +156,10 @@ Also extract the merchant/store name and the receipt date in YYYY-MM-DD format i
 
     res.json(parsedData);
   } catch (error: any) {
-    console.error("Receipt processing failed:", error);
-    res.status(500).json({ error: error.message || "Failed to scan receipt" });
+    console.error("Receipt processing failed fully:");
+    console.error(error);
+    console.error(JSON.stringify(error, null, 2));
+    res.status(500).json({ error: error.message || "Failed to scan receipt", details: error?.stack || error });
   }
 });
 

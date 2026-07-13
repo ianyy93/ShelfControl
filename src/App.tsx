@@ -537,6 +537,7 @@ export default function App() {
     price?: number;
     store?: string;
     dateBought?: string;
+    expiryDate?: string;
   }>) => {
     if (!user || !activeListId) return;
 
@@ -554,7 +555,8 @@ export default function App() {
         quantity: scanned.quantity,
         unit: scanned.unit || "",
         dateBought: purchaseDate,
-        dateAdded: todayStr
+        dateAdded: todayStr,
+        expiryDate: scanned.expiryDate || ""
       };
 
       if (existingMatch && existingMatch.id) {
