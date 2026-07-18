@@ -22,8 +22,9 @@ function getAiClient() {
     if (!apiKey) {
       throw new Error("GEMINI_API_KEY is not defined in environment variables.");
     }
+    const cleanApiKey = apiKey.trim();
     aiClient = new GoogleGenAI({
-      apiKey,
+      apiKey: cleanApiKey,
       httpOptions: {
         headers: {
           "User-Agent": "aistudio-build",
@@ -43,13 +44,38 @@ app.post("/api/receipt/scan", async (req, res) => {
       return;
     }
 
+    console.log("[SERVER SCANDOC] Incoming Scan request details:");
+    console.log(`- mimeType: ${mimeType}`);
+    console.log(`- Raw payload length: ${image.length} chars`);
+    
+    // Defensive check: strip base64 URI scheme prefix if leaked
+    let cleanImage = image;
+    if (cleanImage.includes(",")) {
+      console.log("- Warning: Base64 contained a comma prefix. Splitting out data content...");
+      cleanImage = cleanImage.split(",")[1];
+    }
+    
+    // Strip whitespace / newlines
+    const originalLength = cleanImage.length;
+    cleanImage = cleanImage.replace(/\s/g, "");
+    if (cleanImage.length !== originalLength) {
+      console.log(`- Warning: Whitespace removed from base64. Chars reduced from ${originalLength} to ${cleanImage.length}`);
+    }
+    
+    // Character set validation for base64
+    const invalidChars = cleanImage.match(/[^A-Za-z0-9+/=]/g);
+    if (invalidChars) {
+      const uniqChars = Array.from(new Set(invalidChars)).join("");
+      console.error(`- Warning: Detected invalid Base64 characters: "${uniqChars}"`);
+    }
+
     const ai = getAiClient();
     
     // Prepare image payload for Gemini
     const imagePart = {
       inlineData: {
         mimeType: mimeType || "image/jpeg",
-        data: image,
+        data: cleanImage,
       },
     };
 
@@ -116,12 +142,18 @@ Also extract the merchant/store name and the receipt date in YYYY-MM-DD format i
       }
     });
 
-    const textOutput = response.text;
+    let textOutput = response.text;
     if (!textOutput) {
       throw new Error("Empty response received from the Gemini model.");
     }
 
-    const parsedData = JSON.parse(textOutput.trim());
+    textOutput = textOutput.trim();
+    // Strip markdown JSON wrappers if present
+    if (textOutput.startsWith("```")) {
+      textOutput = textOutput.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/, "").trim();
+    }
+
+    const parsedData = JSON.parse(textOutput);
     console.log("Raw Gemini Output:", JSON.stringify(parsedData, null, 2));
 
     // Validate and sanitize the dateBought on backend to ensure strict YYYY-MM-DD or empty

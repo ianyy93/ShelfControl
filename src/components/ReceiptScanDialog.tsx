@@ -17,7 +17,8 @@ import {
   Calendar, 
   DollarSign, 
   AlertCircle,
-  Check
+  Check,
+  Terminal
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -33,7 +34,6 @@ interface ReceiptScanDialogProps {
     price?: number;
     store?: string;
     dateBought?: string;
-    expiryDate?: string;
   }>) => Promise<void>;
 }
 
@@ -44,7 +44,19 @@ interface ParsedItem {
   unit: string;
   category: Category;
   price?: number;
-  expiryDate?: string;
+}
+
+interface DebugInfo {
+  errorName?: string;
+  errorMessage?: string;
+  errorStack?: string;
+  fileName?: string;
+  fileType?: string;
+  fileSize?: number;
+  base64Length?: number;
+  base64Start?: string;
+  userAgent?: string;
+  serverDetails?: any;
 }
 
 export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImport }: ReceiptScanDialogProps) {
@@ -52,6 +64,8 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null);
+  const [showDebug, setShowDebug] = useState(false);
   
   // Parsed state
   const [parsedStore, setParsedStore] = useState("");
@@ -164,7 +178,12 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
       reader.readAsDataURL(file);
       reader.onload = () => {
         const result = reader.result as string;
-        const base64 = result.split(",")[1];
+        const parts = result.split(",");
+        if (parts.length < 2) {
+          reject(new Error("FileReader result does not contain base64 content after comma."));
+          return;
+        }
+        const base64 = parts[1];
         resolve(base64);
       };
       reader.onerror = (err) => reject(err);
@@ -179,6 +198,7 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
 
     setLoading(true);
     setError(null);
+    setDebugInfo(null);
     setLoadingStep(0);
     setIsParsed(false);
 
@@ -187,8 +207,9 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
       setLoadingStep((prev) => (prev + 1) % loadingMessages.length);
     }, 2500);
 
+    let base64 = "";
     try {
-      const base64 = await fileToBase64(file);
+      base64 = await fileToBase64(file);
       const response = await fetch("/api/receipt/scan", {
         method: "POST",
         headers: {
@@ -201,8 +222,27 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
       });
 
       if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error + " | Details: " + JSON.stringify(errData.details));
+        let errMsg = "Failed to scan receipt";
+        let errDetails: any = null;
+        try {
+          const errData = await response.json();
+          errMsg = errData.error || errMsg;
+          errDetails = errData.details || null;
+          if (errDetails) {
+            errMsg += " | Details: " + (typeof errDetails === "object" ? JSON.stringify(errDetails) : errDetails);
+          }
+        } catch {
+          const textErr = await response.text().catch(() => "");
+          errMsg = `Server error ${response.status}: ${response.statusText || "Internal Server Error"}`;
+          errDetails = textErr;
+          if (textErr && textErr.length < 200) {
+            errMsg += ` (${textErr})`;
+          }
+        }
+        
+        const errorObject = new Error(errMsg);
+        (errorObject as any).serverDetails = errDetails;
+        throw errorObject;
       }
 
       const data = await response.json();
@@ -215,18 +255,6 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
         if (["kg", "g", "lb", "lbs", "oz", "ounce", "ounces", "gram", "grams", "kilo", "kilograms", "kilogram"].includes(lowerUnit)) {
           unit = "pcs";
         }
-        
-        let itemExpiry = item.expiryDate || "";
-        if (itemExpiry) {
-          const clean = String(itemExpiry).trim();
-          const match = clean.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
-          if (match) {
-            itemExpiry = `${match[1]}-${String(match[2]).padStart(2, "0")}-${String(match[3]).padStart(2, "0")}`;
-          } else {
-            itemExpiry = "";
-          }
-        }
-
         return {
           id: `parsed-${idx}-${Date.now()}`,
           name: item.name || "Unknown Item",
@@ -234,7 +262,6 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
           unit: unit,
           category: (CATEGORIES.includes(item.category) ? item.category : "Other") as Category,
           price: item.price !== undefined ? Number(item.price) : undefined,
-          expiryDate: itemExpiry,
         };
       });
 
@@ -257,8 +284,20 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
       setParsedItems(items);
       setIsParsed(true);
     } catch (err: any) {
-      console.error(err);
+      console.error("Scanning Error Caught:", err);
       setError(err.message || "An error occurred while parsing the receipt.");
+      setDebugInfo({
+        errorName: err.name || "Error",
+        errorMessage: err.message,
+        errorStack: err.stack,
+        fileName: file.name,
+        fileType: file.type,
+        fileSize: file.size,
+        base64Length: base64 ? base64.length : 0,
+        base64Start: base64 ? base64.substring(0, 100) + "..." : "Not successfully encoded to base64",
+        userAgent: navigator.userAgent,
+        serverDetails: err.serverDetails,
+      });
     } finally {
       setLoading(false);
       if (stepIntervalRef.current) clearInterval(stepIntervalRef.current);
@@ -282,7 +321,6 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
       quantity: 1,
       unit: "pcs",
       category: "Produce",
-      expiryDate: "",
     };
     setParsedItems(prev => [...prev, newItem]);
   };
@@ -298,7 +336,6 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
           category: item.category,
           unit: item.unit,
           price: item.price,
-          expiryDate: item.expiryDate || undefined,
           store: parsedStore,
           dateBought: parsedDate,
         }));
@@ -330,9 +367,85 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
         </DialogHeader>
 
         {error && (
-          <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm flex items-start gap-2 border border-red-100">
-            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-            <div>{error}</div>
+          <div className="space-y-2">
+            <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm flex items-start gap-2 border border-red-100">
+              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <div className="font-semibold">Error Scanning Receipt</div>
+                <div className="text-xs mt-0.5 opacity-90">{error}</div>
+              </div>
+            </div>
+            
+            {debugInfo && (
+              <div className="border border-gray-200 rounded-lg overflow-hidden bg-gray-50 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setShowDebug(!showDebug)}
+                  className="w-full px-3 py-2 flex items-center justify-between bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200/80 transition-colors text-left"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Terminal className="w-3.5 h-3.5 text-gray-500" />
+                    {showDebug ? "Hide Diagnostic & Debug Info" : "Show Diagnostic & Debug Info"}
+                  </span>
+                  <span className="text-[10px] bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded font-mono">
+                    {debugInfo.errorName || "DOMException"}
+                  </span>
+                </button>
+                
+                {showDebug && (
+                  <div className="p-3 space-y-2 font-mono divide-y divide-gray-200/60 max-h-[250px] overflow-y-auto">
+                    <div className="pb-2 space-y-1">
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Exception Overview</p>
+                      <p className="text-gray-800"><span className="text-red-600 font-semibold">{debugInfo.errorName}:</span> {debugInfo.errorMessage}</p>
+                    </div>
+                    
+                    {debugInfo.errorStack && (
+                      <div className="py-2 space-y-1">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Client Stack Trace</p>
+                        <pre className="text-[10px] bg-gray-900 text-gray-300 p-2 rounded overflow-x-auto whitespace-pre leading-relaxed">
+                          {debugInfo.errorStack}
+                        </pre>
+                      </div>
+                    )}
+
+                    <div className="py-2 space-y-1">
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Uploaded File Context</p>
+                      <div className="grid grid-cols-2 gap-2 text-[11px] text-gray-600">
+                        <p><strong>Name:</strong> {debugInfo.fileName}</p>
+                        <p><strong>Type:</strong> {debugInfo.fileType}</p>
+                        <p><strong>Size:</strong> {(debugInfo.fileSize || 0).toLocaleString()} bytes</p>
+                        <p><strong>Base64 Length:</strong> {(debugInfo.base64Length || 0).toLocaleString()} chars</p>
+                      </div>
+                    </div>
+
+                    {debugInfo.base64Start && (
+                      <div className="py-2 space-y-1">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Base64 Payload Preview</p>
+                        <pre className="text-[10px] bg-gray-100 p-1.5 rounded border overflow-x-auto text-gray-500">
+                          {debugInfo.base64Start}
+                        </pre>
+                      </div>
+                    )}
+
+                    <div className="py-2 space-y-1">
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Client Browser Info</p>
+                      <p className="text-[11px] text-gray-600 leading-normal">{debugInfo.userAgent}</p>
+                    </div>
+
+                    {debugInfo.serverDetails && (
+                      <div className="pt-2 space-y-1">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Server Diagnostic Details</p>
+                        <pre className="text-[10px] bg-gray-900 text-yellow-400 p-2 rounded overflow-x-auto whitespace-pre leading-relaxed">
+                          {typeof debugInfo.serverDetails === "object"
+                            ? JSON.stringify(debugInfo.serverDetails, null, 2)
+                            : String(debugInfo.serverDetails)}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -487,7 +600,7 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-                          <div className="sm:col-span-3 space-y-1 relative">
+                          <div className="sm:col-span-5 space-y-1 relative">
                             <Label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
                               Item Name
                             </Label>
@@ -636,20 +749,6 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
                               }
                               placeholder="0.00"
                               className="h-8 text-sm"
-                            />
-                          </div>
-
-                          <div className="sm:col-span-2 space-y-1">
-                            <Label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">
-                              Expiry Date
-                            </Label>
-                            <Input
-                              type="date"
-                              value={item.expiryDate || ""}
-                              onChange={(e) =>
-                                handleUpdateItem(item.id, "expiryDate", e.target.value)
-                              }
-                              className="h-8 text-xs px-1.5"
                             />
                           </div>
                         </div>
