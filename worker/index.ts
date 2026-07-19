@@ -2,7 +2,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 interface Env {
   GEMINI_API_KEY: string;
-  ASSETS: {
+  ASSETS?: {
     fetch: (request: Request) => Promise<Response>;
   };
 }
@@ -150,6 +150,9 @@ Also extract the merchant/store name and the receipt date in YYYY-MM-DD format i
     }
 
     // Forward non-API requests to static assets
+    if (!env.ASSETS) {
+      return new Response("Internal Server Error: ASSETS binding is missing in Worker environment.", { status: 500 });
+    }
     return env.ASSETS.fetch(request);
   },
 };
