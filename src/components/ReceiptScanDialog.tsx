@@ -59,6 +59,58 @@ interface DebugInfo {
   serverDetails?: any;
 }
 
+const sanitizeReceiptDate = (value: unknown): string => {
+  const fallback = new Date().toISOString().split("T")[0];
+
+  if (value === null || value === undefined || value === "") {
+    return fallback;
+  }
+
+  const raw = String(value).trim();
+  if (!raw) {
+    return fallback;
+  }
+
+  const normalized = raw.replace(/\s+/g, " ").trim();
+  const yearFirstMatch = normalized.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if (yearFirstMatch) {
+    return `${yearFirstMatch[1]}-${String(yearFirstMatch[2]).padStart(2, "0")}-${String(yearFirstMatch[3]).padStart(2, "0")}`;
+  }
+
+  const dayMonthYearMatch = normalized.match(/(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+  if (dayMonthYearMatch) {
+    const year = Number(dayMonthYearMatch[3]);
+    let month = Number(dayMonthYearMatch[1]);
+    let day = Number(dayMonthYearMatch[2]);
+
+    if (month > 12 && day <= 12) {
+      const temp = month;
+      month = day;
+      day = temp;
+    }
+
+    if (Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day)) {
+      return fallback;
+    }
+
+    const monthString = String(month).padStart(2, "0");
+    const dayString = String(day).padStart(2, "0");
+    return `${year}-${monthString}-${dayString}`;
+  }
+
+  const timestampMatch = normalized.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})[T\s]/);
+  if (timestampMatch) {
+    return `${timestampMatch[1]}-${String(timestampMatch[2]).padStart(2, "0")}-${String(timestampMatch[3]).padStart(2, "0")}`;
+  }
+
+  const parsedDate = new Date(normalized);
+  if (!Number.isNaN(parsedDate.getTime())) {
+    return `${parsedDate.getFullYear()}-${String(parsedDate.getMonth() + 1).padStart(2, "0")}-${String(parsedDate.getDate()).padStart(2, "0")}`;
+  }
+
+  return fallback;
+};
+
 export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImport }: ReceiptScanDialogProps) {
   const [dragActive, setDragActive] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -265,19 +317,7 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
         };
       });
 
-      // Robust client-side sanitization of dateBought to avoid HTML5 date input pattern crashes
-      let finalDate = data.dateBought || "";
-      if (finalDate) {
-        const clean = String(finalDate).trim();
-        const match = clean.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
-        if (match) {
-          finalDate = `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
-        } else {
-          finalDate = new Date().toISOString().split("T")[0];
-        }
-      } else {
-        finalDate = new Date().toISOString().split("T")[0];
-      }
+      const finalDate = sanitizeReceiptDate(data.dateBought);
 
       setParsedStore(data.store || "");
       setParsedDate(finalDate);
@@ -552,9 +592,10 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
                     </Label>
                     <Input
                       type="date"
-                      value={parsedDate}
+                      value={parsedDate || ""}
                       onChange={(e) => {
-                        setParsedDate(e.target.value);
+                        const nextDate = sanitizeReceiptDate(e.target.value);
+                        setParsedDate(nextDate);
                       }}
                       className="bg-white h-9 transition-all"
                     />
