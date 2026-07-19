@@ -75,9 +75,13 @@ function sanitizeDate(rawValue: unknown): string {
 }
 
 export async function onRequestPost(context: any) {
+  console.log("[SCAN API LOG] onRequestPost started");
   try {
     const req = context.request;
-    const body = await req.json().catch(() => null);
+    const body = await req.json().catch((e: any) => {
+      console.error("[SCAN API LOG] Failed to parse JSON body:", e);
+      return null;
+    });
     
     console.log("[SCAN API LOG] Request body parsed successfully:", !!body);
     
@@ -105,7 +109,7 @@ Also extract the merchant/store name and the receipt date in YYYY-MM-DD format i
     
     console.log("[SCAN API LOG] Requesting generateContent from Gemini...");
     const response = await client.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-1.5-flash",
       contents: [{ inlineData: { mimeType, data: cleanImage } }, { text: promptText }],
       config: {
         systemInstruction: "You are an expert receipt parsing assistant. Extract grocery items and store info into the exact JSON schema requested.",
@@ -162,4 +166,9 @@ export async function onRequestOptions() {
       "Access-Control-Allow-Headers": "Content-Type",
     },
   });
+}
+
+export async function onRequestGet() {
+  console.log("[SCAN API LOG] onRequestGet hit unexpectedly");
+  return Response.json({ error: "Method Not Allowed. Use POST." }, { status: 405 });
 }
