@@ -109,7 +109,7 @@ Also extract the merchant/store name and the receipt date in YYYY-MM-DD format i
     
     console.log("[SCAN API LOG] Requesting generateContent from Gemini...");
     const response = await client.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-3.5-flash",
       contents: [{ inlineData: { mimeType, data: cleanImage } }, { text: promptText }],
       config: {
         systemInstruction: "You are an expert receipt parsing assistant. Extract grocery items and store info into the exact JSON schema requested.",

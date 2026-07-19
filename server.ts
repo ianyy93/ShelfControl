@@ -90,7 +90,7 @@ For each item, determine:
 Also extract the merchant/store name and the receipt date in YYYY-MM-DD format if visible.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-3.5-flash",
       contents: [imagePart, { text: promptText }],
       config: {
         systemInstruction: "You are an expert receipt parsing assistant. Extract grocery items and store info into the exact JSON schema requested.",
