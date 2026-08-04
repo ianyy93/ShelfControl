@@ -251,8 +251,8 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
     if (typeof createImageBitmap !== "undefined") {
       try {
         const bitmap = await createImageBitmap(file);
-        const maxDimension = file.size > 1_500_000 ? 1200 : 1600;
-        const quality = file.size > 2_500_000 ? 0.72 : 0.82;
+        const maxDimension = file.size > 2_500_000 ? 800 : 1000;
+        const quality = file.size > 3_000_000 ? 0.58 : file.size > 1_500_000 ? 0.66 : 0.74;
 
         const canvas = document.createElement("canvas");
         const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
@@ -265,7 +265,8 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
         }
 
         ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL(isPng ? "image/png" : "image/jpeg", quality);
+        const mimeType = isPng ? "image/png" : "image/jpeg";
+        const dataUrl = canvas.toDataURL(mimeType, quality);
         const parts = dataUrl.split(",");
         if (parts.length < 2) {
           throw new Error("Image compression did not produce base64 data.");
@@ -394,7 +395,9 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
       console.error("Scanning Error Caught:", err);
       const normalizedError = err?.message === "Load failed"
         ? "Your browser could not read that image. Please try a smaller image file or a different photo."
-        : (err?.message || "An error occurred while parsing the receipt.");
+        : (err?.message?.includes("524") || err?.message?.includes("timeout")
+          ? "The receipt scan timed out while processing the image. Please try again with a smaller or more cropped photo."
+          : (err?.message || "An error occurred while parsing the receipt."));
       setError(normalizedError);
       setDebugInfo({
         errorName: err.name || "Error",
