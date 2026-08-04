@@ -536,9 +536,20 @@ export default function App() {
     category: Category;
     unit: string;
     price?: number;
+    unitPrice?: number;
     priceQuantity?: number;
     priceUnit?: string;
     notes?: string;
+    entries?: Array<{
+      location?: string;
+      quantity?: number;
+      amount?: number;
+      unit?: string;
+      expiryDate?: string;
+      dateBought?: string;
+      label?: string;
+      tags?: string[];
+    }>;
     store?: string;
     dateBought?: string;
   }>) => {
@@ -552,17 +563,35 @@ export default function App() {
       const purchaseDate = scanned.dateBought || todayStr;
 
       const entryId = crypto.randomUUID();
+      const scanEntries = (scanned.entries && scanned.entries.length > 0 ? scanned.entries : [{ quantity: scanned.quantity, unit: scanned.unit || "", location: "", amount: undefined, expiryDate: "", dateBought: purchaseDate, label: "", tags: [] }])
+        .map((entry, index) => ({
+          id: `${entryId}-${index}`,
+          location: entry.location || "",
+          quantity: Number(entry.quantity ?? scanned.quantity) || 1,
+          amount: entry.amount !== undefined ? Number(entry.amount) : undefined,
+          unit: entry.unit || scanned.unit || "",
+          expiryDate: entry.expiryDate || "",
+          dateBought: entry.dateBought || purchaseDate,
+          dateAdded: todayStr,
+          label: entry.label || "",
+          tags: entry.tags || [],
+        }));
+
       const newEntry: InventoryEntry = {
         id: entryId,
-        location: "", // Unassigned location as requested!
-        quantity: scanned.quantity,
-        unit: scanned.unit || "",
-        dateBought: purchaseDate,
-        dateAdded: todayStr
+        location: scanEntries[0]?.location || "",
+        quantity: scanEntries[0]?.quantity || scanned.quantity,
+        amount: scanEntries[0]?.amount,
+        unit: scanEntries[0]?.unit || scanned.unit || "",
+        expiryDate: scanEntries[0]?.expiryDate,
+        dateBought: scanEntries[0]?.dateBought || purchaseDate,
+        dateAdded: todayStr,
+        label: scanEntries[0]?.label,
+        tags: scanEntries[0]?.tags,
       };
 
       if (existingMatch && existingMatch.id) {
-        const updatedEntries = [...(existingMatch.inventoryEntries || []), newEntry];
+        const updatedEntries = [...(existingMatch.inventoryEntries || []), ...scanEntries];
         const updatedLocations = Array.from(new Set(updatedEntries.map(e => e.location).filter(Boolean)));
         
         const updateData: any = {
@@ -576,6 +605,7 @@ export default function App() {
           const normalizedUnit = scanned.priceUnit || scanned.unit || "pcs";
           const derivedPrice = deriveUnitPrice({
             totalPrice: scanned.price,
+            unitPrice: scanned.unitPrice,
             priceQuantity: scanned.priceQuantity ?? scanned.quantity ?? 1,
             priceUnit: normalizedUnit,
             quantity: scanned.quantity,
@@ -600,7 +630,7 @@ export default function App() {
           category: scanned.category,
           inventoryQuantity: scanned.quantity,
           shoppingQuantity: 0,
-          inventoryEntries: [newEntry],
+          inventoryEntries: scanEntries,
           locations: [],
           location: "",
           unit: scanned.unit || "",
@@ -615,6 +645,7 @@ export default function App() {
           const normalizedUnit = scanned.priceUnit || scanned.unit || "pcs";
           const derivedPrice = deriveUnitPrice({
             totalPrice: scanned.price,
+            unitPrice: scanned.unitPrice,
             priceQuantity: scanned.priceQuantity ?? scanned.quantity ?? 1,
             priceUnit: normalizedUnit,
             quantity: scanned.quantity,

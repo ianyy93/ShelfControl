@@ -41,6 +41,17 @@ interface ReceiptScanDialogProps {
   }>) => Promise<void>;
 }
 
+interface ParsedEntry {
+  location?: string;
+  quantity?: number;
+  amount?: number;
+  unit?: string;
+  expiryDate?: string;
+  dateBought?: string;
+  label?: string;
+  tags?: string[];
+}
+
 interface ParsedItem {
   id: string;
   name: string;
@@ -48,9 +59,11 @@ interface ParsedItem {
   unit: string;
   category: Category;
   price?: number;
+  unitPrice?: number;
   priceQuantity?: number;
   priceUnit?: string;
   notes?: string;
+  entries?: ParsedEntry[];
 }
 
 interface DebugInfo {
@@ -318,9 +331,20 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
           unit,
           category: (CATEGORIES.includes(item.category) ? item.category : "Other") as Category,
           price: item.price !== undefined ? Number(item.price) : undefined,
+          unitPrice: item.unitPrice !== undefined ? Number(item.unitPrice) : undefined,
           priceQuantity,
           priceUnit,
           notes: item.notes || "",
+          entries: Array.isArray(item.entries) ? item.entries.map((entry: any) => ({
+            location: entry.location || "",
+            quantity: entry.quantity !== undefined ? Number(entry.quantity) : 1,
+            amount: entry.amount !== undefined ? Number(entry.amount) : undefined,
+            unit: normalizeUnit(entry.unit || unit),
+            expiryDate: entry.expiryDate || "",
+            dateBought: entry.dateBought || "",
+            label: entry.label || "",
+            tags: Array.isArray(entry.tags) ? entry.tags : [],
+          })) : [{ quantity: Number(item.quantity) || 1, unit: unit, amount: undefined, location: "", dateBought: "", expiryDate: "", label: "", tags: [] }],
         };
       });
 
@@ -368,9 +392,11 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
       quantity: 1,
       unit: "pcs",
       category: "Produce",
+      unitPrice: undefined,
       priceQuantity: 1,
       priceUnit: "pcs",
       notes: "",
+      entries: [{ quantity: 1, unit: "pcs", amount: undefined, location: "", dateBought: "", expiryDate: "", label: "", tags: [] }],
     };
     setParsedItems(prev => [...prev, newItem]);
   };
@@ -386,9 +412,11 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
           category: item.category,
           unit: item.unit,
           price: item.price,
+          unitPrice: item.unitPrice,
           priceQuantity: item.priceQuantity,
           priceUnit: item.priceUnit,
           notes: item.notes,
+          entries: item.entries,
           store: parsedStore,
           dateBought: parsedDate,
         }));
@@ -412,6 +440,7 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
   const renderUnitPrice = (item: ParsedItem) => {
     const projection = deriveUnitPrice({
       totalPrice: item.price,
+      unitPrice: item.unitPrice,
       priceQuantity: item.priceQuantity ?? item.quantity ?? 1,
       priceUnit: item.priceUnit || item.unit || "pcs",
       quantity: item.quantity || 1,
@@ -845,6 +874,23 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
 
                           <div className="sm:col-span-2 space-y-1">
                             <Label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">
+                              Unit Price
+                            </Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={item.unitPrice ?? ""}
+                              onChange={(e) =>
+                                handleUpdateItem(item.id, "unitPrice", e.target.value === "" ? undefined : Number(e.target.value))
+                              }
+                              placeholder="0.00"
+                              className="h-8 text-sm"
+                            />
+                          </div>
+
+                          <div className="sm:col-span-2 space-y-1">
+                            <Label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">
                               Price Qty
                             </Label>
                             <Input
@@ -885,6 +931,158 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
                               className="h-8 text-sm"
                             />
                           </div>
+                        </div>
+
+                        <div className="rounded-lg border border-gray-200 bg-gray-50/80 p-3 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Inventory Entries</div>
+                              <div className="text-[11px] text-gray-500">Add per-entry details for multi-piece or split packs.</div>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleUpdateItem(item.id, "entries", [...(item.entries || []), { quantity: 1, unit: item.unit || "pcs", amount: undefined, location: "", dateBought: "", expiryDate: "", label: "", tags: [] }])}
+                              className="h-7 text-xs"
+                            >
+                              <Plus className="w-3 h-3 mr-1" /> Add Entry
+                            </Button>
+                          </div>
+
+                          {(item.entries || []).map((entry, entryIndex) => (
+                            <div key={`${item.id}-entry-${entryIndex}`} className="rounded-lg border border-gray-200 bg-white p-3 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Entry #{entryIndex + 1}</span>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6 text-gray-400 hover:text-red-500"
+                                  onClick={() => {
+                                    const nextEntries = [...(item.entries || [])];
+                                    nextEntries.splice(entryIndex, 1);
+                                    handleUpdateItem(item.id, "entries", nextEntries);
+                                  }}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="space-y-1">
+                                  <Label className="text-[9px] font-bold uppercase tracking-wider text-gray-400">Qty</Label>
+                                  <Input
+                                    type="number"
+                                    step="any"
+                                    min="0.01"
+                                    value={entry.quantity ?? 1}
+                                    onChange={(e) => {
+                                      const nextEntries = [...(item.entries || [])];
+                                      nextEntries[entryIndex] = { ...nextEntries[entryIndex], quantity: Number(e.target.value) || 1 };
+                                      handleUpdateItem(item.id, "entries", nextEntries);
+                                    }}
+                                    className="h-8 text-sm"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-[9px] font-bold uppercase tracking-wider text-gray-400">Amount</Label>
+                                  <Input
+                                    type="number"
+                                    step="any"
+                                    min="0"
+                                    value={entry.amount ?? ""}
+                                    onChange={(e) => {
+                                      const nextEntries = [...(item.entries || [])];
+                                      nextEntries[entryIndex] = { ...nextEntries[entryIndex], amount: e.target.value === "" ? undefined : Number(e.target.value) };
+                                      handleUpdateItem(item.id, "entries", nextEntries);
+                                    }}
+                                    className="h-8 text-sm"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-[9px] font-bold uppercase tracking-wider text-gray-400">Unit</Label>
+                                  <select
+                                    value={entry.unit || item.unit || "pcs"}
+                                    onChange={(e) => {
+                                      const nextEntries = [...(item.entries || [])];
+                                      nextEntries[entryIndex] = { ...nextEntries[entryIndex], unit: normalizeUnit(e.target.value) };
+                                      handleUpdateItem(item.id, "entries", nextEntries);
+                                    }}
+                                    className="flex h-8 w-full items-center justify-between rounded-lg border border-input bg-transparent px-2 py-1 text-sm shadow-sm ring-offset-background focus:outline-none bg-gray-50 text-xs"
+                                  >
+                                    {COMMON_UNITS.map(unit => (
+                                      <option key={unit} value={unit}>{unit}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-[9px] font-bold uppercase tracking-wider text-gray-400">Location</Label>
+                                  <Input
+                                    value={entry.location || ""}
+                                    onChange={(e) => {
+                                      const nextEntries = [...(item.entries || [])];
+                                      nextEntries[entryIndex] = { ...nextEntries[entryIndex], location: e.target.value };
+                                      handleUpdateItem(item.id, "entries", nextEntries);
+                                    }}
+                                    placeholder="Fridge"
+                                    className="h-8 text-sm"
+                                  />
+                                </div>
+                                <div className="space-y-1 col-span-2">
+                                  <Label className="text-[9px] font-bold uppercase tracking-wider text-gray-400">Label</Label>
+                                  <Input
+                                    value={entry.label || ""}
+                                    onChange={(e) => {
+                                      const nextEntries = [...(item.entries || [])];
+                                      nextEntries[entryIndex] = { ...nextEntries[entryIndex], label: e.target.value };
+                                      handleUpdateItem(item.id, "entries", nextEntries);
+                                    }}
+                                    placeholder="For stir fry"
+                                    className="h-8 text-sm"
+                                  />
+                                </div>
+                                <div className="space-y-1 col-span-2">
+                                  <Label className="text-[9px] font-bold uppercase tracking-wider text-gray-400">Tags</Label>
+                                  <Input
+                                    value={(entry.tags || []).join(", ")}
+                                    onChange={(e) => {
+                                      const nextEntries = [...(item.entries || [])];
+                                      nextEntries[entryIndex] = { ...nextEntries[entryIndex], tags: e.target.value.split(',').map(tag => tag.trim()).filter(Boolean) };
+                                      handleUpdateItem(item.id, "entries", nextEntries);
+                                    }}
+                                    placeholder="bulk, frozen"
+                                    className="h-8 text-sm"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-[9px] font-bold uppercase tracking-wider text-gray-400">Expiry</Label>
+                                  <Input
+                                    type="date"
+                                    value={entry.expiryDate || ""}
+                                    onChange={(e) => {
+                                      const nextEntries = [...(item.entries || [])];
+                                      nextEntries[entryIndex] = { ...nextEntries[entryIndex], expiryDate: e.target.value };
+                                      handleUpdateItem(item.id, "entries", nextEntries);
+                                    }}
+                                    className="h-8 text-sm"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-[9px] font-bold uppercase tracking-wider text-gray-400">Date Bought</Label>
+                                  <Input
+                                    type="date"
+                                    value={entry.dateBought || ""}
+                                    onChange={(e) => {
+                                      const nextEntries = [...(item.entries || [])];
+                                      nextEntries[entryIndex] = { ...nextEntries[entryIndex], dateBought: e.target.value };
+                                      handleUpdateItem(item.id, "entries", nextEntries);
+                                    }}
+                                    className="h-8 text-sm"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          ))}
                         </div>
 
                         {renderUnitPrice(item)}

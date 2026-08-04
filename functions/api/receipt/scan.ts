@@ -103,8 +103,10 @@ For each item, determine:
 - The unit of measurement for that quantity (use 'pcs' for counted items, or a meaningful unit like 'kg', 'g', 'lb', 'oz', 'mL', 'L' when the receipt clearly shows a weight or volume basis).
 - The best category (must be exactly one of: Produce, Dairy & Eggs, Meat & Seafood, Pantry, Frozen, Beverages, Snacks, Household, Dog Supplies, Other).
 - The total price paid for that line item.
-- The price basis quantity and unit that the price applies to if the receipt shows a unit price or a package/weight/volume price (for example, 2.5 kg, 1 L, 3 pcs). If the receipt does not specify a separate price basis, set the price basis equal to the purchased quantity and the same unit.
+- The unit price when the receipt clearly shows a price per unit, per kg, per pound, per liter, or similar (for example 3.99 per kg, 1.25 per L, 0.75 per pcs). If the receipt does not clearly present a unit price, leave this empty.
+- The price basis quantity and unit that the price applies to if the receipt shows a unit price, package/weight/volume price, or multi-pack price (for example, 2.5 kg, 1 L, 3 pcs). If not specified, use the purchased quantity and same unit.
 - A short note with any useful context such as pack size, bundle, or multi-pack details.
+- An entries array that describes the inventory-style entries for this item. If one quantity is made of multiple packages or pieces, split it into multiple entry objects. Each entry should include location, quantity, amount, unit, expiryDate, dateBought, label, and tags.
 Also extract the merchant/store name and the receipt date in YYYY-MM-DD format if visible.`;
 
     const client = getAiClient(context.env);
@@ -131,9 +133,26 @@ Also extract the merchant/store name and the receipt date in YYYY-MM-DD format i
                   unit: { type: Type.STRING },
                   category: { type: Type.STRING },
                   price: { type: Type.NUMBER },
+                  unitPrice: { type: Type.NUMBER },
                   priceQuantity: { type: Type.NUMBER },
                   priceUnit: { type: Type.STRING },
                   notes: { type: Type.STRING },
+                  entries: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        location: { type: Type.STRING },
+                        quantity: { type: Type.NUMBER },
+                        amount: { type: Type.NUMBER },
+                        unit: { type: Type.STRING },
+                        expiryDate: { type: Type.STRING },
+                        dateBought: { type: Type.STRING },
+                        label: { type: Type.STRING },
+                        tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+                      },
+                    },
+                  },
                 },
                 required: ["name", "quantity", "unit", "category", "price"],
               },

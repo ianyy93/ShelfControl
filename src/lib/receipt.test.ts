@@ -20,3 +20,17 @@ test('derives per-unit prices from receipt totals', () => {
   assert.equal(result.unitPrice, 2);
   assert.equal(result.priceUnit, 'kg');
 });
+
+test('prefers an explicit unit price when provided', () => {
+  const result = deriveUnitPrice({
+    totalPrice: 5,
+    unitPrice: 3.49,
+    priceQuantity: 2.5,
+    priceUnit: 'kg',
+    quantity: 2.5,
+    quantityUnit: 'kg',
+  });
+
+  assert.equal(result.unitPrice, 3.49);
+  assert.equal(result.totalPrice, 5);
+});

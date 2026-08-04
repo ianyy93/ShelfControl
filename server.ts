@@ -83,10 +83,14 @@ app.post("/api/receipt/scan", async (req, res) => {
     const promptText = `Analyze this receipt or invoice and extract all purchased grocery and household items. 
 For each item, determine:
 - A clean, friendly item name (e.g., "Organic Apples", "Whole Milk").
-- The quantity purchased. Since the user wants to count items (including meat, seafood, and produce) by pieces ('pcs') rather than weight, estimate or extract the piece count for the quantity.
-- The unit of measurement. NEVER use weight units (such as 'kg', 'g', 'lb', 'lbs', 'oz'). Instead, always use 'pcs' as the unit for count/pieces. For liquids, you may still use volume units ('mL', 'L') if appropriate, but for solid items, meat, and produce, always use 'pcs'.
+- The purchased quantity as it appears on the receipt.
+- The unit of measurement for that quantity (use 'pcs' for counted items, or a meaningful unit like 'kg', 'g', 'lb', 'oz', 'mL', 'L' when the receipt clearly shows a weight or volume basis).
 - The best category (must be exactly one of: Produce, Dairy & Eggs, Meat & Seafood, Pantry, Frozen, Beverages, Snacks, Household, Dog Supplies, Other).
-- The total price paid for that item.
+- The total price paid for that line item.
+- The unit price when the receipt clearly shows a price per unit, per kg, per pound, per liter, or similar; if not clear, leave this empty.
+- The price basis quantity and unit that the price applies to when the receipt shows a unit price or multi-pack price; if not specified, use the purchased quantity and same unit.
+- A short note with any useful context such as pack size, bundle, or multi-pack details.
+- An entries array that describes the inventory-style entries for this item. If one quantity is made of multiple packages or pieces, split it into multiple entry objects. Each entry should include location, quantity, amount, unit, expiryDate, dateBought, label, and tags.
 Also extract the merchant/store name and the receipt date in YYYY-MM-DD format if visible.`;
 
     const response = await ai.models.generateContent({
@@ -131,6 +135,39 @@ Also extract the merchant/store name and the receipt date in YYYY-MM-DD format i
                   price: {
                     type: Type.NUMBER,
                     description: "Total line price paid for this item."
+                  },
+                  unitPrice: {
+                    type: Type.NUMBER,
+                    description: "Unit price when the receipt shows a per-unit or per-weight basis."
+                  },
+                  priceQuantity: {
+                    type: Type.NUMBER,
+                    description: "The quantity the price applies to when the receipt shows a unit price basis."
+                  },
+                  priceUnit: {
+                    type: Type.STRING,
+                    description: "The unit that the price applies to when the receipt shows a unit price basis."
+                  },
+                  notes: {
+                    type: Type.STRING,
+                    description: "Useful context such as pack size, bundle, or multi-pack details."
+                  },
+                  entries: {
+                    type: Type.ARRAY,
+                    description: "Inventory-style entry details for this item. Split into multiple entries if needed.",
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        location: { type: Type.STRING },
+                        quantity: { type: Type.NUMBER },
+                        amount: { type: Type.NUMBER },
+                        unit: { type: Type.STRING },
+                        expiryDate: { type: Type.STRING },
+                        dateBought: { type: Type.STRING },
+                        label: { type: Type.STRING },
+                        tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+                      }
+                    }
                   }
                 },
                 required: ["name", "quantity", "unit", "category", "price"]
