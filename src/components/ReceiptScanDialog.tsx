@@ -244,7 +244,38 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
     }
   };
 
-  const fileToBase64 = (file: File): Promise<string> => {
+  const fileToBase64 = async (file: File): Promise<string> => {
+    const isJpeg = file.type === "image/jpeg" || file.type === "image/jpg";
+    const isPng = file.type === "image/png";
+
+    if (typeof createImageBitmap !== "undefined") {
+      try {
+        const bitmap = await createImageBitmap(file);
+        const maxDimension = file.size > 1_500_000 ? 1200 : 1600;
+        const quality = file.size > 2_500_000 ? 0.72 : 0.82;
+
+        const canvas = document.createElement("canvas");
+        const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+        canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+        canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          throw new Error("Unable to create an image canvas for this browser.");
+        }
+
+        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL(isPng ? "image/png" : "image/jpeg", quality);
+        const parts = dataUrl.split(",");
+        if (parts.length < 2) {
+          throw new Error("Image compression did not produce base64 data.");
+        }
+        return parts[1];
+      } catch (error) {
+        console.warn("createImageBitmap image conversion failed, falling back to FileReader", error);
+      }
+    }
+
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.readAsDataURL(file);
@@ -255,10 +286,15 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
           reject(new Error("FileReader result does not contain base64 content after comma."));
           return;
         }
-        const base64 = parts[1];
-        resolve(base64);
+        resolve(parts[1]);
       };
-      reader.onerror = (err) => reject(err);
+      reader.onerror = () => {
+        reject(new Error(
+          isJpeg || isPng
+            ? "Your browser could not read this image. Please try a smaller image file or a different photo."
+            : "Your browser could not read this file as an image."
+        ));
+      };
     });
   };
 
@@ -356,7 +392,10 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
       setIsParsed(true);
     } catch (err: any) {
       console.error("Scanning Error Caught:", err);
-      setError(err.message || "An error occurred while parsing the receipt.");
+      const normalizedError = err?.message === "Load failed"
+        ? "Your browser could not read that image. Please try a smaller image file or a different photo."
+        : (err?.message || "An error occurred while parsing the receipt.");
+      setError(normalizedError);
       setDebugInfo({
         errorName: err.name || "Error",
         errorMessage: err.message,
