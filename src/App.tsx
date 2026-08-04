@@ -15,6 +15,7 @@ import { CheckOffDialog } from "./components/CheckOffDialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { ReceiptScanDialog } from "./components/ReceiptScanDialog";
 import { Sparkles, Receipt, GitMerge } from "lucide-react";
+import { deriveUnitPrice } from "./lib/receipt";
 import { Badge } from "./components/ui/badge";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "./components/ui/accordion";
 import { LineChart as RechartsLineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
@@ -535,6 +536,9 @@ export default function App() {
     category: Category;
     unit: string;
     price?: number;
+    priceQuantity?: number;
+    priceUnit?: string;
+    notes?: string;
     store?: string;
     dateBought?: string;
   }>) => {
@@ -569,13 +573,22 @@ export default function App() {
         };
 
         if (scanned.price !== undefined && scanned.store) {
+          const normalizedUnit = scanned.priceUnit || scanned.unit || "pcs";
+          const derivedPrice = deriveUnitPrice({
+            totalPrice: scanned.price,
+            priceQuantity: scanned.priceQuantity ?? scanned.quantity ?? 1,
+            priceUnit: normalizedUnit,
+            quantity: scanned.quantity,
+            quantityUnit: scanned.unit || normalizedUnit,
+          });
+
           const newPriceEntry: PriceEntry = {
             id: crypto.randomUUID(),
             store: scanned.store,
             date: purchaseDate,
-            price: scanned.price,
-            quantity: scanned.quantity,
-            unitStr: scanned.unit || ""
+            price: derivedPrice.unitPrice ?? scanned.price,
+            quantity: 1,
+            unitStr: normalizedUnit
           };
           updateData.priceHistory = arrayUnion(newPriceEntry);
         }
@@ -599,13 +612,22 @@ export default function App() {
         };
 
         if (scanned.price !== undefined && scanned.store) {
+          const normalizedUnit = scanned.priceUnit || scanned.unit || "pcs";
+          const derivedPrice = deriveUnitPrice({
+            totalPrice: scanned.price,
+            priceQuantity: scanned.priceQuantity ?? scanned.quantity ?? 1,
+            priceUnit: normalizedUnit,
+            quantity: scanned.quantity,
+            quantityUnit: scanned.unit || normalizedUnit,
+          });
+
           newItem.priceHistory = [{
             id: crypto.randomUUID(),
             store: scanned.store,
             date: purchaseDate,
-            price: scanned.price,
-            quantity: scanned.quantity,
-            unitStr: scanned.unit || ""
+            price: derivedPrice.unitPrice ?? scanned.price,
+            quantity: 1,
+            unitStr: normalizedUnit
           }];
         }
 
@@ -1643,10 +1665,19 @@ export default function App() {
                     {item.priceHistory.length > 1 && (
                       <div className="h-32 w-full p-2 pb-0">
                           <ResponsiveContainer width="100%" height="100%">
-                              <RechartsLineChart data={[...item.priceHistory].sort((a, b) => a.date.localeCompare(b.date)).map(e => ({
-                                  date: new Date(`${e.date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-                                  unitPrice: Number((e.isDiscount && e.dealPrice && e.dealQuantity ? Number(e.dealPrice) / Number(e.dealQuantity) : Number(e.price) / (Number(e.quantity) || 1)).toFixed(2))
-                              }))}>
+                              <RechartsLineChart data={[...item.priceHistory].sort((a, b) => a.date.localeCompare(b.date)).map(e => {
+                                  const projection = deriveUnitPrice({
+                                      totalPrice: e.isDiscount && e.dealPrice && e.dealQuantity ? Number(e.dealPrice) : Number(e.price),
+                                      priceQuantity: e.isDiscount && e.dealQuantity ? Number(e.dealQuantity) : Number(e.quantity) || 1,
+                                      priceUnit: e.unitStr || item.unit || "pcs",
+                                      quantity: e.isDiscount && e.dealQuantity ? Number(e.dealQuantity) : Number(e.quantity) || 1,
+                                      quantityUnit: e.unitStr || item.unit || "pcs"
+                                  });
+                                  return {
+                                      date: new Date(`${e.date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+                                      unitPrice: Number((projection.unitPrice ?? 0).toFixed(2))
+                                  };
+                              })}>
                                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
                                   <XAxis dataKey="date" fontSize={10} tickLine={false} axisLine={false} tickMargin={8} minTickGap={15} />
                                   <YAxis width={30} fontSize={10} tickLine={false} axisLine={false} tickFormatter={(value) => `$${value}`} />

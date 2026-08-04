@@ -4,6 +4,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { CATEGORIES, Category, GroceryItem, InventoryEntry, PriceEntry } from "../types";
+import { COMMON_UNITS, deriveUnitPrice, normalizeUnit } from "../lib/receipt";
 import { 
   Receipt, 
   Upload, 
@@ -32,6 +33,9 @@ interface ReceiptScanDialogProps {
     category: Category;
     unit: string;
     price?: number;
+    priceQuantity?: number;
+    priceUnit?: string;
+    notes?: string;
     store?: string;
     dateBought?: string;
   }>) => Promise<void>;
@@ -44,6 +48,9 @@ interface ParsedItem {
   unit: string;
   category: Category;
   price?: number;
+  priceQuantity?: number;
+  priceUnit?: string;
+  notes?: string;
 }
 
 interface DebugInfo {
@@ -301,19 +308,19 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
       
       // Map parsed items
       const items: ParsedItem[] = (data.items || []).map((item: any, idx: number) => {
-        let unit = item.unit || "pcs";
-        const lowerUnit = unit.toLowerCase().trim();
-        // If it got weight units anyway, convert them to pcs as per user preference
-        if (["kg", "g", "lb", "lbs", "oz", "ounce", "ounces", "gram", "grams", "kilo", "kilograms", "kilogram"].includes(lowerUnit)) {
-          unit = "pcs";
-        }
+        const unit = normalizeUnit(item.unit || "pcs");
+        const priceQuantity = Number(item.priceQuantity ?? item.quantity ?? 1) || 1;
+        const priceUnit = normalizeUnit(item.priceUnit || item.unit || unit);
         return {
           id: `parsed-${idx}-${Date.now()}`,
           name: item.name || "Unknown Item",
-          quantity: item.quantity || 1,
-          unit: unit,
+          quantity: Number(item.quantity) || 1,
+          unit,
           category: (CATEGORIES.includes(item.category) ? item.category : "Other") as Category,
           price: item.price !== undefined ? Number(item.price) : undefined,
+          priceQuantity,
+          priceUnit,
+          notes: item.notes || "",
         };
       });
 
@@ -361,6 +368,9 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
       quantity: 1,
       unit: "pcs",
       category: "Produce",
+      priceQuantity: 1,
+      priceUnit: "pcs",
+      notes: "",
     };
     setParsedItems(prev => [...prev, newItem]);
   };
@@ -376,6 +386,9 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
           category: item.category,
           unit: item.unit,
           price: item.price,
+          priceQuantity: item.priceQuantity,
+          priceUnit: item.priceUnit,
+          notes: item.notes,
           store: parsedStore,
           dateBought: parsedDate,
         }));
@@ -395,6 +408,26 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
   };
 
   const totalSpent = parsedItems.reduce((sum, item) => sum + (item.price || 0), 0);
+
+  const renderUnitPrice = (item: ParsedItem) => {
+    const projection = deriveUnitPrice({
+      totalPrice: item.price,
+      priceQuantity: item.priceQuantity ?? item.quantity ?? 1,
+      priceUnit: item.priceUnit || item.unit || "pcs",
+      quantity: item.quantity || 1,
+      quantityUnit: item.unit || "pcs",
+    });
+
+    if (typeof projection.unitPrice !== "number") {
+      return null;
+    }
+
+    return (
+      <div className="rounded-lg border border-blue-100 bg-blue-50/60 px-2.5 py-2 text-[11px] text-blue-800">
+        <span className="font-semibold">Unit price:</span> ${projection.unitPrice.toFixed(2)} / {projection.priceUnit || "unit"}
+      </div>
+    );
+  };
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
@@ -774,7 +807,7 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
 
                           <div className="sm:col-span-2 space-y-1">
                             <Label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">
-                              Price ($)
+                              Total Price ($)
                             </Label>
                             <Input
                               type="number"
@@ -793,6 +826,68 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
                             />
                           </div>
                         </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                          <div className="sm:col-span-2 space-y-1">
+                            <Label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">
+                              Unit
+                            </Label>
+                            <select
+                              value={item.unit}
+                              onChange={(e) => handleUpdateItem(item.id, "unit", normalizeUnit(e.target.value))}
+                              className="flex h-8 w-full items-center justify-between rounded-lg border border-input bg-transparent px-2 py-1 text-sm shadow-sm ring-offset-background focus:outline-none bg-gray-50 text-xs"
+                            >
+                              {COMMON_UNITS.map(unit => (
+                                <option key={unit} value={unit}>{unit}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="sm:col-span-2 space-y-1">
+                            <Label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">
+                              Price Qty
+                            </Label>
+                            <Input
+                              type="number"
+                              step="any"
+                              min="0.01"
+                              value={item.priceQuantity ?? 1}
+                              onChange={(e) =>
+                                handleUpdateItem(item.id, "priceQuantity", e.target.value === "" ? 1 : Number(e.target.value))
+                              }
+                              className="h-8 text-sm"
+                            />
+                          </div>
+
+                          <div className="sm:col-span-2 space-y-1">
+                            <Label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">
+                              Price Unit
+                            </Label>
+                            <select
+                              value={item.priceUnit || item.unit || "pcs"}
+                              onChange={(e) => handleUpdateItem(item.id, "priceUnit", normalizeUnit(e.target.value))}
+                              className="flex h-8 w-full items-center justify-between rounded-lg border border-input bg-transparent px-2 py-1 text-sm shadow-sm ring-offset-background focus:outline-none bg-gray-50 text-xs"
+                            >
+                              {COMMON_UNITS.map(unit => (
+                                <option key={unit} value={unit}>{unit}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="sm:col-span-6 space-y-1">
+                            <Label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">
+                              Notes / Pack Details
+                            </Label>
+                            <Input
+                              value={item.notes || ""}
+                              onChange={(e) => handleUpdateItem(item.id, "notes", e.target.value)}
+                              placeholder="e.g. 2-pack, family size"
+                              className="h-8 text-sm"
+                            />
+                          </div>
+                        </div>
+
+                        {renderUnitPrice(item)}
                       </div>
                     ))}
                   </div>

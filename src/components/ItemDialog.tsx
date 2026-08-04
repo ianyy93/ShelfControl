@@ -911,10 +911,19 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
               {item.priceHistory.length > 1 && (
                   <div className="h-32 w-full mb-4 mt-2">
                       <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={[...item.priceHistory].sort((a, b) => a.date.localeCompare(b.date)).map(e => ({
-                              date: new Date(`${e.date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-                              unitPrice: Number((e.isDiscount && e.dealPrice && e.dealQuantity ? Number(e.dealPrice) / Number(e.dealQuantity) : Number(e.price) / (Number(e.quantity) || 1)).toFixed(2))
-                          }))}>
+                          <LineChart data={[...item.priceHistory].sort((a, b) => a.date.localeCompare(b.date)).map(e => {
+                              const projection = deriveUnitPrice({
+                                  totalPrice: e.isDiscount && e.dealPrice && e.dealQuantity ? Number(e.dealPrice) : Number(e.price),
+                                  priceQuantity: e.isDiscount && e.dealQuantity ? Number(e.dealQuantity) : Number(e.quantity) || 1,
+                                  priceUnit: e.unitStr || item.unit || "pcs",
+                                  quantity: e.isDiscount && e.dealQuantity ? Number(e.dealQuantity) : Number(e.quantity) || 1,
+                                  quantityUnit: e.unitStr || item.unit || "pcs"
+                              });
+                              return {
+                                  date: new Date(`${e.date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+                                  unitPrice: Number((projection.unitPrice ?? 0).toFixed(2))
+                              };
+                          })}>
                               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
                               <XAxis dataKey="date" fontSize={10} tickLine={false} axisLine={false} tickMargin={8} minTickGap={15} />
                               <YAxis width={30} fontSize={10} tickLine={false} axisLine={false} tickFormatter={(value) => `$${value}`} />
@@ -938,12 +947,12 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                               {entry.isDiscount && entry.dealPrice && entry.dealQuantity ? (
                                   <>
                                       <span className="font-bold text-green-700">${Number(entry.dealPrice).toFixed(2)}</span>
-                                      <span className="text-[10px] text-green-600">for {entry.dealQuantity}</span>
+                                      <span className="text-[10px] text-green-600">for {entry.dealQuantity} {entry.unitStr || item.unit || 'pcs'}</span>
                                   </>
                               ) : (
                                   <>
                                       <span className="font-bold text-blue-700">${Number(entry.price).toFixed(2)}</span>
-                                      <span className="text-[10px] text-gray-500">for {entry.quantity} {entry.unitStr}</span>
+                                      <span className="text-[10px] text-gray-500">/ {entry.unitStr || item.unit || 'pcs'}</span>
                                   </>
                               )}
                           </div>
