@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deriveUnitPrice, normalizeUnit } from './receipt.ts';
+import { deriveUnitPrice, normalizeUnit, resolveReceiptDate } from './receipt.ts';
 
 test('normalizes common unit aliases', () => {
   assert.equal(normalizeUnit('kilograms'), 'kg');
@@ -33,4 +33,13 @@ test('prefers an explicit unit price when provided', () => {
 
   assert.equal(result.unitPrice, 3.49);
   assert.equal(result.totalPrice, 5);
+});
+
+test('prefers the uploaded image date when OCR returns an older year', () => {
+  const resolved = resolveReceiptDate('2024-08-06', {
+    fallbackDate: '2026-08-06',
+    fileDate: '2026-08-06',
+  });
+
+  assert.equal(resolved, '2026-08-06');
 });

@@ -60,6 +60,31 @@ export function convertQuantityToUnit(value: number, fromUnit?: string | null, t
   return null;
 }
 
+export function resolveReceiptDate(
+  parsedDate?: string | null,
+  context?: { fallbackDate?: string | null; fileDate?: string | null }
+): string {
+  const fallbackDate = context?.fallbackDate || new Date().toISOString().split("T")[0];
+  const fileDate = context?.fileDate || null;
+
+  const cleanParsedDate = typeof parsedDate === "string" ? parsedDate.trim() : "";
+  const cleanFileDate = typeof fileDate === "string" ? fileDate.trim() : "";
+
+  if (!cleanParsedDate) {
+    return cleanFileDate || fallbackDate;
+  }
+
+  if (cleanFileDate && cleanParsedDate !== cleanFileDate) {
+    const parsedYear = Number(cleanParsedDate.slice(0, 4));
+    const fileYear = Number(cleanFileDate.slice(0, 4));
+    if (!Number.isNaN(parsedYear) && !Number.isNaN(fileYear) && fileYear >= parsedYear + 2) {
+      return cleanFileDate;
+    }
+  }
+
+  return cleanParsedDate;
+}
+
 export function deriveUnitPrice(input: {
   totalPrice?: number;
   unitPrice?: number;

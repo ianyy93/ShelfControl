@@ -4,7 +4,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { CATEGORIES, Category, GroceryItem, InventoryEntry, PriceEntry } from "../types";
-import { COMMON_UNITS, deriveUnitPrice, normalizeUnit } from "../lib/receipt";
+import { COMMON_UNITS, deriveUnitPrice, normalizeUnit, resolveReceiptDate } from "../lib/receipt";
 import { 
   Receipt, 
   Upload, 
@@ -386,9 +386,13 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
       });
 
       const finalDate = sanitizeReceiptDate(data.dateBought);
+      const resolvedDate = resolveReceiptDate(finalDate, {
+        fallbackDate: new Date().toISOString().split("T")[0],
+        fileDate: undefined,
+      });
 
       setParsedStore(data.store || "");
-      setParsedDate(finalDate);
+      setParsedDate(resolvedDate);
       setParsedItems(items);
       setIsParsed(true);
     } catch (err: any) {
