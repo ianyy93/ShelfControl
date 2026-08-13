@@ -15,7 +15,7 @@ import { CheckOffDialog } from "./components/CheckOffDialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { ReceiptScanDialog } from "./components/ReceiptScanDialog";
 import { Sparkles, Receipt, GitMerge } from "lucide-react";
-import { deriveUnitPrice } from "./lib/receipt";
+import { buildReceiptPriceEntry, deriveUnitPrice } from "./lib/receipt";
 import { Badge } from "./components/ui/badge";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "./components/ui/accordion";
 import { LineChart as RechartsLineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
@@ -602,25 +602,18 @@ export default function App() {
         };
 
         if (scanned.price !== undefined && scanned.store) {
-          const normalizedUnit = scanned.priceUnit || scanned.unit || "pcs";
-          const derivedPrice = deriveUnitPrice({
+          const newPriceEntry = buildReceiptPriceEntry({
+            store: scanned.store,
+            date: purchaseDate,
             totalPrice: scanned.price,
             unitPrice: scanned.unitPrice,
             priceQuantity: scanned.priceQuantity ?? scanned.quantity ?? 1,
-            priceUnit: normalizedUnit,
+            priceUnit: scanned.priceUnit || scanned.unit || "pcs",
             quantity: scanned.quantity,
-            quantityUnit: scanned.unit || normalizedUnit,
+            quantityUnit: scanned.unit || scanned.priceUnit || "pcs",
           });
 
-          const newPriceEntry: PriceEntry = {
-            id: crypto.randomUUID(),
-            store: scanned.store,
-            date: purchaseDate,
-            price: derivedPrice.unitPrice ?? scanned.price,
-            quantity: 1,
-            unitStr: normalizedUnit
-          };
-          updateData.priceHistory = arrayUnion(newPriceEntry);
+          updateData.priceHistory = arrayUnion(newPriceEntry as PriceEntry);
         }
 
         await updateDoc(doc(db, "lists", activeListId, "items", existingMatch.id), removeUndefined(updateData));
@@ -642,24 +635,16 @@ export default function App() {
         };
 
         if (scanned.price !== undefined && scanned.store) {
-          const normalizedUnit = scanned.priceUnit || scanned.unit || "pcs";
-          const derivedPrice = deriveUnitPrice({
+          newItem.priceHistory = [buildReceiptPriceEntry({
+            store: scanned.store,
+            date: purchaseDate,
             totalPrice: scanned.price,
             unitPrice: scanned.unitPrice,
             priceQuantity: scanned.priceQuantity ?? scanned.quantity ?? 1,
-            priceUnit: normalizedUnit,
+            priceUnit: scanned.priceUnit || scanned.unit || "pcs",
             quantity: scanned.quantity,
-            quantityUnit: scanned.unit || normalizedUnit,
-          });
-
-          newItem.priceHistory = [{
-            id: crypto.randomUUID(),
-            store: scanned.store,
-            date: purchaseDate,
-            price: derivedPrice.unitPrice ?? scanned.price,
-            quantity: 1,
-            unitStr: normalizedUnit
-          }];
+            quantityUnit: scanned.unit || scanned.priceUnit || "pcs",
+          })];
         }
 
         await addDoc(collection(db, "lists", activeListId, "items"), removeUndefined(newItem) as GroceryItem);

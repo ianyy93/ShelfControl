@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deriveUnitPrice, normalizeUnit, resolveReceiptDate } from './receipt.ts';
+import { buildReceiptPriceEntry, deriveUnitPrice, normalizeUnit, resolveReceiptDate } from './receipt.ts';
 
 test('normalizes common unit aliases', () => {
   assert.equal(normalizeUnit('kilograms'), 'kg');
@@ -42,4 +42,21 @@ test('prefers the uploaded image date when OCR returns an older year', () => {
   });
 
   assert.equal(resolved, '2026-08-06');
+});
+
+test('uses the receipt price basis quantity for price history entries', () => {
+  const entry = buildReceiptPriceEntry({
+    store: 'Fresh Market',
+    date: '2026-08-06',
+    totalPrice: 12.5,
+    unitPrice: 2.5,
+    priceQuantity: 5,
+    priceUnit: 'kg',
+    quantity: 5,
+    quantityUnit: 'kg',
+  });
+
+  assert.equal(entry.quantity, 5);
+  assert.equal(entry.unitStr, 'kg');
+  assert.equal(entry.price, 2.5);
 });

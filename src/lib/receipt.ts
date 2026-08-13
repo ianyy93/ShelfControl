@@ -85,6 +85,37 @@ export function resolveReceiptDate(
   return cleanParsedDate;
 }
 
+export function buildReceiptPriceEntry(input: {
+  store: string;
+  date: string;
+  totalPrice?: number;
+  unitPrice?: number;
+  priceQuantity?: number;
+  priceUnit?: string | null;
+  quantity?: number;
+  quantityUnit?: string | null;
+}) {
+  const normalizedPriceQuantity = Number(input.priceQuantity ?? input.quantity ?? 1) || 1;
+  const normalizedPriceUnit = normalizeUnit(input.priceUnit || input.quantityUnit || "pcs");
+  const derived = deriveUnitPrice({
+    totalPrice: input.totalPrice,
+    unitPrice: input.unitPrice,
+    priceQuantity: normalizedPriceQuantity,
+    priceUnit: normalizedPriceUnit,
+    quantity: input.quantity,
+    quantityUnit: input.quantityUnit || normalizedPriceUnit,
+  });
+
+  return {
+    id: crypto.randomUUID(),
+    store: input.store,
+    date: input.date,
+    price: derived.unitPrice ?? input.totalPrice ?? 0,
+    quantity: normalizedPriceQuantity,
+    unitStr: normalizedPriceUnit,
+  };
+}
+
 export function deriveUnitPrice(input: {
   totalPrice?: number;
   unitPrice?: number;
