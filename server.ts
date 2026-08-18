@@ -70,8 +70,7 @@ app.post("/api/receipt/scan", async (req, res) => {
     }
 
     const ai = getAiClient();
-    
-    // Prepare image payload for Gemini
+
     const imagePart = {
       inlineData: {
         mimeType: mimeType || "image/jpeg",
@@ -93,7 +92,7 @@ For each item, determine:
 - An entries array that describes the inventory-style entries for this item. If one quantity is made of multiple packages or pieces, split it into multiple entry objects. Each entry should include location, quantity, amount, unit, expiryDate, dateBought, label, and tags.
 Also extract the merchant/store name and the receipt date in YYYY-MM-DD format if visible.`;
 
-    const response = await ai.models.generateContent({
+    const callGemini = async () => ai.models.generateContent({
       model: "gemini-3.5-flash",
       contents: [imagePart, { text: promptText }],
       config: {
@@ -178,6 +177,22 @@ Also extract the merchant/store name and the receipt date in YYYY-MM-DD format i
         }
       }
     });
+
+    let response;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        response = await callGemini();
+        break;
+      } catch (error: any) {
+        const message = String(error?.message || "");
+        const shouldRetry = /429|500|502|503|504|524|timeout|temporar/i.test(message) || error?.status === 429 || error?.status === 500 || error?.status === 502 || error?.status === 503 || error?.status === 504 || error?.status === 524;
+        if (shouldRetry && attempt < 3) {
+          await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+          continue;
+        }
+        throw error;
+      }
+    }
 
     let textOutput = response.text;
     if (!textOutput) {

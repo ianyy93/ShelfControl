@@ -251,8 +251,8 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
     if (typeof createImageBitmap !== "undefined") {
       try {
         const bitmap = await createImageBitmap(file);
-        const maxDimension = file.size > 2_500_000 ? 800 : 1000;
-        const quality = file.size > 3_000_000 ? 0.58 : file.size > 1_500_000 ? 0.66 : 0.74;
+        const maxDimension = file.size > 2_000_000 ? 900 : 1200;
+        const quality = file.size > 3_000_000 ? 0.55 : file.size > 1_500_000 ? 0.62 : 0.7;
 
         const canvas = document.createElement("canvas");
         const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
@@ -299,6 +299,66 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
     });
   };
 
+  const scanReceiptWithRetry = async (imageBase64: string, mimeType: string) => {
+    const retryableErrors = [429, 500, 502, 503, 504, 524];
+    let lastError: any = null;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const response = await fetch("/api/receipt/scan", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            image: imageBase64,
+            mimeType,
+          }),
+        });
+
+        if (!response.ok) {
+          let errMsg = "Failed to scan receipt";
+          let errDetails: any = null;
+          try {
+            const errData = await response.json();
+            errMsg = errData.error || errMsg;
+            errDetails = errData.details || null;
+          } catch {
+            const textErr = await response.text().catch(() => "");
+            errMsg = `Server error ${response.status}: ${response.statusText || "Internal Server Error"}`;
+            errDetails = textErr;
+          }
+
+          if (retryableErrors.includes(response.status) && attempt < 3) {
+            await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+            continue;
+          }
+
+          const errorObject = new Error(errMsg);
+          (errorObject as any).serverDetails = errDetails;
+          throw errorObject;
+        }
+
+        return await response.json();
+      } catch (error: any) {
+        lastError = error;
+        const message = String(error?.message || "");
+        const shouldRetry = retryableErrors.some(code => message.includes(String(code)))
+          || /timeout|temporar|503|524|429|502|504/i.test(message)
+          || error?.name === "TypeError";
+
+        if (shouldRetry && attempt < 3) {
+          await new Promise(resolve => setTimeout(resolve, 750 * attempt));
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    throw lastError ?? new Error("Failed to scan receipt");
+  };
+
   const processFile = async (file: File) => {
     if (!file.type.startsWith("image/")) {
       setError("Please upload an image file (PNG, JPG, etc.)");
@@ -319,42 +379,7 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
     let base64 = "";
     try {
       base64 = await fileToBase64(file);
-      const response = await fetch("/api/receipt/scan", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          image: base64,
-          mimeType: file.type,
-        }),
-      });
-
-      if (!response.ok) {
-        let errMsg = "Failed to scan receipt";
-        let errDetails: any = null;
-        try {
-          const errData = await response.json();
-          errMsg = errData.error || errMsg;
-          errDetails = errData.details || null;
-          if (errDetails) {
-            errMsg += " | Details: " + (typeof errDetails === "object" ? JSON.stringify(errDetails) : errDetails);
-          }
-        } catch {
-          const textErr = await response.text().catch(() => "");
-          errMsg = `Server error ${response.status}: ${response.statusText || "Internal Server Error"}`;
-          errDetails = textErr;
-          if (textErr && textErr.length < 200) {
-            errMsg += ` (${textErr})`;
-          }
-        }
-        
-        const errorObject = new Error(errMsg);
-        (errorObject as any).serverDetails = errDetails;
-        throw errorObject;
-      }
-
-      const data = await response.json();
+      const data = await scanReceiptWithRetry(base64, file.type);
       
       // Map parsed items
       const items: ParsedItem[] = (data.items || []).map((item: any, idx: number) => {

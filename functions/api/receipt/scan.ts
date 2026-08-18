@@ -110,58 +110,78 @@ For each item, determine:
 Also extract the merchant/store name and the receipt date in YYYY-MM-DD format if visible.`;
 
     const client = getAiClient(context.env);
-    
-    console.log("[SCAN API LOG] Requesting generateContent from Gemini...");
-    const response = await client.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: [{ inlineData: { mimeType, data: cleanImage } }, { text: promptText }],
-      config: {
-        systemInstruction: "You are an expert receipt parsing assistant. Extract grocery items and store info into the exact JSON schema requested.",
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            store: { type: Type.STRING },
-            dateBought: { type: Type.STRING },
-            items: {
-              type: Type.ARRAY,
+
+    const callGemini = async () => {
+      console.log("[SCAN API LOG] Requesting generateContent from Gemini...");
+      return client.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: [{ inlineData: { mimeType, data: cleanImage } }, { text: promptText }],
+        config: {
+          systemInstruction: "You are an expert receipt parsing assistant. Extract grocery items and store info into the exact JSON schema requested.",
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              store: { type: Type.STRING },
+              dateBought: { type: Type.STRING },
               items: {
-                type: Type.OBJECT,
-                properties: {
-                  name: { type: Type.STRING },
-                  quantity: { type: Type.NUMBER },
-                  unit: { type: Type.STRING },
-                  category: { type: Type.STRING },
-                  price: { type: Type.NUMBER },
-                  unitPrice: { type: Type.NUMBER },
-                  priceQuantity: { type: Type.NUMBER },
-                  priceUnit: { type: Type.STRING },
-                  notes: { type: Type.STRING },
-                  entries: {
-                    type: Type.ARRAY,
-                    items: {
-                      type: Type.OBJECT,
-                      properties: {
-                        location: { type: Type.STRING },
-                        quantity: { type: Type.NUMBER },
-                        amount: { type: Type.NUMBER },
-                        unit: { type: Type.STRING },
-                        expiryDate: { type: Type.STRING },
-                        dateBought: { type: Type.STRING },
-                        label: { type: Type.STRING },
-                        tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    name: { type: Type.STRING },
+                    quantity: { type: Type.NUMBER },
+                    unit: { type: Type.STRING },
+                    category: { type: Type.STRING },
+                    price: { type: Type.NUMBER },
+                    unitPrice: { type: Type.NUMBER },
+                    priceQuantity: { type: Type.NUMBER },
+                    priceUnit: { type: Type.STRING },
+                    notes: { type: Type.STRING },
+                    entries: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          location: { type: Type.STRING },
+                          quantity: { type: Type.NUMBER },
+                          amount: { type: Type.NUMBER },
+                          unit: { type: Type.STRING },
+                          expiryDate: { type: Type.STRING },
+                          dateBought: { type: Type.STRING },
+                          label: { type: Type.STRING },
+                          tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+                        },
                       },
                     },
                   },
+                  required: ["name", "quantity", "unit", "category", "price"],
                 },
-                required: ["name", "quantity", "unit", "category", "price"],
               },
             },
+            required: ["store", "dateBought", "items"],
           },
-          required: ["store", "dateBought", "items"],
         },
-      },
-    });
+      });
+    };
+
+    let response;
+    let lastError: any = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        response = await callGemini();
+        break;
+      } catch (error: any) {
+        lastError = error;
+        const message = String(error?.message || "");
+        const shouldRetry = /429|500|502|503|504|524|timeout|temporar/i.test(message) || error?.status === 429 || error?.status === 500 || error?.status === 502 || error?.status === 503 || error?.status === 504 || error?.status === 524;
+        if (shouldRetry && attempt < 3) {
+          await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+          continue;
+        }
+        throw error;
+      }
+    }
 
     const parsed = JSON.parse(response.text || "{}");
     console.log("[SCAN API LOG] Parsing succeeded, results store:", parsed.store);
