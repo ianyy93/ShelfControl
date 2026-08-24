@@ -1130,6 +1130,12 @@ export default function App() {
     });
   }, [items]);
 
+  const lowStockItems = useMemo(() => {
+    return items
+      .filter(item => item.inventoryQuantity > 0 && item.inventoryQuantity <= 2 && !item.isHiddenSuggestion)
+      .sort((a, b) => a.inventoryQuantity - b.inventoryQuantity || a.name.localeCompare(b.name));
+  }, [items]);
+
   const replenishmentSuggestions = useMemo(() => {
     const suggestions: { item: GroceryItem; meanInterval: number; daysSince: number }[] = [];
     const today = new Date();
@@ -2519,7 +2525,7 @@ export default function App() {
             <TabsList className="grid w-full lg:w-[600px] max-w-full grid-cols-2 bg-gray-200/50 rounded-xl h-auto min-h-[44px] sm:min-h-[42px] p-1 gap-1 mx-auto">
             <TabsTrigger value="shopping" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm py-2 px-1 flex-col sm:flex-row h-auto min-h-full">
               <ShoppingCart className="w-4 h-4 mb-1 sm:mb-0 sm:mr-2 shrink-0" />
-              <span className="text-[10px] sm:text-sm leading-tight text-center sm:text-left break-words max-w-full">Shopping List</span>
+              <span className="text-[10px] sm:text-sm leading-tight text-center sm:text-left break-words max-w-full">Needs Buying</span>
               {shoppingItems.length > 0 && <Badge variant="secondary" className="hidden sm:flex ml-2 bg-blue-100 text-blue-700 shrink-0">{shoppingItems.length}</Badge>}
             </TabsTrigger>
             <TabsTrigger value="inventory" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm py-2 px-1 flex-col sm:flex-row h-auto min-h-full">
@@ -2578,8 +2584,28 @@ export default function App() {
 
           <TabsContent value="shopping" className="focus-visible:outline-none space-y-12">
             {renderControls()}
+            {(shoppingItems.length > 0 || lowStockItems.length > 0) && (
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6 shadow-sm">
+                <div className="flex items-center gap-2 text-blue-900 font-bold text-sm mb-2">
+                  <ShoppingCart className="w-4 h-4 text-blue-600" />
+                  Restock overview
+                </div>
+                <div className="flex flex-wrap gap-2 text-xs">
+                  {shoppingItems.length > 0 && (
+                    <span className="bg-white border border-blue-100 text-blue-700 px-2.5 py-1.5 rounded-full font-semibold">
+                      {shoppingItems.length} items already on the list
+                    </span>
+                  )}
+                  {lowStockItems.length > 0 && (
+                    <span className="bg-white border border-amber-200 text-amber-700 px-2.5 py-1.5 rounded-full font-semibold">
+                      {lowStockItems.length} low-stock items to watch
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
             <div>
-               <h2 className="sr-only">To Buy</h2>
+               <h2 className="sr-only">Needs Buying</h2>
                {renderGroupedItems(shoppingItems, true)}
             </div>
             {suggestedItems.length > 0 && (
@@ -2669,40 +2695,71 @@ export default function App() {
               </Button>
             </div>
 
-            {expiredOrSoonItems.length > 0 && (
-              <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 shadow-sm space-y-3">
+            {(expiredOrSoonItems.length > 0 || lowStockItems.length > 0) && (
+              <div className="bg-gradient-to-r from-red-50 via-amber-50 to-orange-50 border border-red-200 rounded-xl p-4 mb-6 shadow-sm space-y-4">
                 <div className="flex items-center gap-2 text-red-800 font-bold">
                   <AlertTriangle className="w-5 h-5 text-red-600 animate-bounce" />
-                  <span>Expiry Warning: {expiredOrSoonItems.length} {expiredOrSoonItems.length === 1 ? 'item' : 'items'} need attention</span>
+                  <span>Needs attention</span>
                 </div>
-                <p className="text-xs text-red-700 -mt-1">
-                  The following items in your pantry are expired or will expire within the next 3 days. Click any item to view or edit details.
-                </p>
-                <div className="flex flex-wrap gap-2 pt-1">
-                  {expiredOrSoonItems.map(item => {
-                    const isExpired = (item.inventoryEntries || []).some(e => getExpiryStatus(e.expiryDate) === 'expired');
-                    return (
-                      <button
-                        key={`expiry-alert-${item.id}`}
-                        onClick={() => {
-                          setEditingItem(item);
-                          setIsDialogOpen(true);
-                        }}
-                        className={`text-xs px-2.5 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-colors border shadow-sm ${
-                          isExpired 
-                            ? 'bg-red-100 hover:bg-red-200 border-red-300 text-red-800' 
-                            : 'bg-amber-100 hover:bg-amber-200 border-amber-300 text-amber-800'
-                        }`}
-                      >
-                        <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
-                        <span className="max-w-[120px] truncate">{item.name}</span>
-                        <span className="text-[10px] opacity-80 uppercase tracking-wider font-bold">
-                          {isExpired ? 'Expired' : 'Soon'}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+
+                {expiredOrSoonItems.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-red-700 font-medium">
+                      {expiredOrSoonItems.length} item{expiredOrSoonItems.length === 1 ? '' : 's'} are expired or close to expiring.
+                    </p>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {expiredOrSoonItems.map(item => {
+                        const isExpired = (item.inventoryEntries || []).some(e => getExpiryStatus(e.expiryDate) === 'expired');
+                        return (
+                          <button
+                            key={`expiry-alert-${item.id}`}
+                            onClick={() => {
+                              setEditingItem(item);
+                              setIsDialogOpen(true);
+                            }}
+                            className={`text-xs px-2.5 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-colors border shadow-sm ${
+                              isExpired 
+                                ? 'bg-red-100 hover:bg-red-200 border-red-300 text-red-800' 
+                                : 'bg-amber-100 hover:bg-amber-200 border-amber-300 text-amber-800'
+                            }`}
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
+                            <span className="max-w-[120px] truncate">{item.name}</span>
+                            <span className="text-[10px] opacity-80 uppercase tracking-wider font-bold">
+                              {isExpired ? 'Expired' : 'Soon'}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {lowStockItems.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-amber-700 font-medium">
+                      {lowStockItems.length} item{lowStockItems.length === 1 ? '' : 's'} are running low.
+                    </p>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {lowStockItems.map(item => (
+                        <button
+                          key={`low-stock-alert-${item.id}`}
+                          onClick={() => {
+                            setEditingItem(item);
+                            setIsDialogOpen(true);
+                          }}
+                          className="text-xs px-2.5 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-colors border shadow-sm bg-amber-100 hover:bg-amber-200 border-amber-300 text-amber-800"
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
+                          <span className="max-w-[120px] truncate">{item.name}</span>
+                          <span className="text-[10px] opacity-80 uppercase tracking-wider font-bold">
+                            {item.inventoryQuantity} left
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
