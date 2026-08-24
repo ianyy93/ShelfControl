@@ -486,6 +486,70 @@ export default function App() {
     }
   };
 
+  const handleManualMerge = async (sourceItem: GroceryItem) => {
+    if (!user || !activeListId) return;
+
+    const targetName = window.prompt(
+      `Merge "${sourceItem.name}" into another existing item by exact name:`,
+      sourceItem.name
+    );
+
+    if (!targetName || !targetName.trim()) return;
+
+    const trimmedName = targetName.trim();
+    const targetItem = items.find(item =>
+      item.id !== sourceItem.id &&
+      item.name.trim().toLowerCase() === trimmedName.toLowerCase()
+    );
+
+    if (!targetItem) {
+      alert(`No exact match found for "${trimmedName}". Try matching the existing item name exactly.`);
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Merge "${sourceItem.name}" into "${targetItem.name}"? This combines the inventory, shopping quantities, notes, and price history.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      const mergedEntries = [...(targetItem.inventoryEntries || []), ...(sourceItem.inventoryEntries || [])];
+      const mergedInventoryQuantity = mergedEntries.reduce((sum, entry) => sum + (Number(entry.quantity) || 0), 0);
+      const mergedShoppingQuantity = (targetItem.shoppingQuantity || 0) + (sourceItem.shoppingQuantity || 0);
+      const mergedLocations = Array.from(new Set(mergedEntries.map(entry => entry.location).filter(Boolean) as string[]));
+      const mergedNotes = [targetItem.notes, sourceItem.notes].filter(Boolean).join("\n");
+      const mergedPriceHistory = [...(targetItem.priceHistory || []), ...(sourceItem.priceHistory || [])];
+      const mergedUnprocessed = (targetItem.unprocessedQuantity || 0) + (sourceItem.unprocessedQuantity || 0);
+
+      await updateDoc(doc(db, "lists", activeListId, "items", targetItem.id!), removeUndefined({
+        category: targetItem.category || sourceItem.category,
+        inventoryEntries: mergedEntries,
+        inventoryQuantity: mergedInventoryQuantity,
+        shoppingQuantity: mergedShoppingQuantity,
+        locations: mergedLocations,
+        notes: mergedNotes,
+        priceHistory: mergedPriceHistory,
+        unprocessedQuantity: mergedUnprocessed > 0 ? mergedUnprocessed : undefined,
+        unit: targetItem.unit || sourceItem.unit,
+        isHiddenSuggestion: false,
+        updatedAt: serverTimestamp()
+      }));
+
+      await deleteDoc(doc(db, "lists", activeListId, "items", sourceItem.id!));
+
+      setLastAction({
+        type: 'update',
+        itemId: targetItem.id!,
+        itemData: targetItem,
+        description: `Merged "${sourceItem.name}" into "${targetItem.name}"`
+      });
+    } catch (error) {
+      console.error("Error manually merging items:", error);
+      alert("Failed to merge items.");
+    }
+  };
+
   const handleMergeDuplicate = async (dupName: string, duplicateList: GroceryItem[]) => {
     if (!user || !activeListId || duplicateList.length < 2) return;
     
@@ -1580,6 +1644,9 @@ export default function App() {
                     <Button variant="ghost" size="icon" className="h-10 w-10 text-gray-400 hover:text-blue-600" onClick={(e) => { e.stopPropagation(); setEditingItem(item); setIsDialogOpen(true); }}>
                       <Edit className="w-4 h-4" />
                     </Button>
+                    <Button variant="ghost" size="icon" className="h-10 w-10 text-amber-500 hover:text-amber-700" onClick={(e) => { e.stopPropagation(); handleManualMerge(item); }} title="Merge with another existing item">
+                      <GitMerge className="w-4 h-4" />
+                    </Button>
                     <Button variant="ghost" size="icon" className="h-10 w-10 text-red-400 hover:text-red-700" onClick={(e) => {
                       e.stopPropagation();
                       handleDelete(item.id!);
@@ -2583,41 +2650,34 @@ export default function App() {
           )}
 
           <TabsContent value="shopping" className="focus-visible:outline-none space-y-12">
-            {renderControls()}
-            {(shoppingItems.length > 0 || lowStockItems.length > 0) && (
-              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6 shadow-sm">
-                <div className="flex items-center gap-2 text-blue-900 font-bold text-sm mb-2">
-                  <ShoppingCart className="w-4 h-4 text-blue-600" />
-                  Restock overview
+            {shoppingItems.length > 0 && (
+              <>
+                {renderControls()}
+                {(shoppingItems.length > 0 || lowStockItems.length > 0) && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6 shadow-sm">
+                    <div className="flex items-center gap-2 text-blue-900 font-bold text-sm mb-2">
+                      <ShoppingCart className="w-4 h-4 text-blue-600" />
+                      Restock overview
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      {shoppingItems.length > 0 && (
+                        <span className="bg-white border border-blue-100 text-blue-700 px-2.5 py-1.5 rounded-full font-semibold">
+                          {shoppingItems.length} items already on the list
+                        </span>
+                      )}
+                      {lowStockItems.length > 0 && (
+                        <span className="bg-white border border-amber-200 text-amber-700 px-2.5 py-1.5 rounded-full font-semibold">
+                          {lowStockItems.length} low-stock items to watch
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+                <div>
+                   <h2 className="sr-only">Needs Buying</h2>
+                   {renderGroupedItems(shoppingItems, true)}
                 </div>
-                <div className="flex flex-wrap gap-2 text-xs">
-                  {shoppingItems.length > 0 && (
-                    <span className="bg-white border border-blue-100 text-blue-700 px-2.5 py-1.5 rounded-full font-semibold">
-                      {shoppingItems.length} items already on the list
-                    </span>
-                  )}
-                  {lowStockItems.length > 0 && (
-                    <span className="bg-white border border-amber-200 text-amber-700 px-2.5 py-1.5 rounded-full font-semibold">
-                      {lowStockItems.length} low-stock items to watch
-                    </span>
-                  )}
-                </div>
-              </div>
-            )}
-            <div>
-               <h2 className="sr-only">Needs Buying</h2>
-               {renderGroupedItems(shoppingItems, true)}
-            </div>
-            {suggestedItems.length > 0 && (
-              <div className="pt-8 border-t border-gray-200">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-bold text-gray-500 flex items-center gap-2">
-                     <Box className="w-5 h-5" />
-                     Suggested (Out of Stock)
-                  </h2>
-                </div>
-                {renderGroupedItems(suggestedItems, false, true)}
-              </div>
+              </>
             )}
 
             {replenishmentSuggestions.length > 0 && (
@@ -2679,87 +2739,39 @@ export default function App() {
             )}
           </TabsContent>
           <TabsContent value="inventory" className="focus-visible:outline-none">
-            <div className="w-full bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 p-3 sm:p-4 rounded-xl mb-6 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-              <div className="space-y-1">
-                <h3 className="font-bold text-blue-900 flex items-center gap-2 text-base sm:text-lg">
-                  <Sparkles className="w-5 h-5 text-blue-600 animate-pulse" />
-                  AI Receipt Scanner
-                </h3>
-                <p className="text-xs sm:text-sm text-blue-700/80 max-w-xl">
-                  Quickly populate your inventory! Upload a photo of a store receipt to parse items, quantities, categories, and prices automatically.
-                </p>
-              </div>
-              <Button onClick={() => setIsScanDialogOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white shrink-0 shadow-sm font-semibold gap-2 py-4 px-5 rounded-xl text-xs sm:text-sm">
-                <Receipt className="w-4 h-4" />
-                Scan Receipt
-              </Button>
-            </div>
-
             {(expiredOrSoonItems.length > 0 || lowStockItems.length > 0) && (
-              <div className="bg-gradient-to-r from-red-50 via-amber-50 to-orange-50 border border-red-200 rounded-xl p-4 mb-6 shadow-sm space-y-4">
-                <div className="flex items-center gap-2 text-red-800 font-bold">
-                  <AlertTriangle className="w-5 h-5 text-red-600 animate-bounce" />
-                  <span>Needs attention</span>
+              <div className="mb-6 rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-600">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Attention</span>
                 </div>
 
-                {expiredOrSoonItems.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="text-xs text-red-700 font-medium">
-                      {expiredOrSoonItems.length} item{expiredOrSoonItems.length === 1 ? '' : 's'} are expired or close to expiring.
-                    </p>
-                    <div className="flex flex-wrap gap-2 pt-1">
-                      {expiredOrSoonItems.map(item => {
-                        const isExpired = (item.inventoryEntries || []).some(e => getExpiryStatus(e.expiryDate) === 'expired');
-                        return (
-                          <button
-                            key={`expiry-alert-${item.id}`}
-                            onClick={() => {
-                              setEditingItem(item);
-                              setIsDialogOpen(true);
-                            }}
-                            className={`text-xs px-2.5 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-colors border shadow-sm ${
-                              isExpired 
-                                ? 'bg-red-100 hover:bg-red-200 border-red-300 text-red-800' 
-                                : 'bg-amber-100 hover:bg-amber-200 border-amber-300 text-amber-800'
-                            }`}
-                          >
-                            <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
-                            <span className="max-w-[120px] truncate">{item.name}</span>
-                            <span className="text-[10px] opacity-80 uppercase tracking-wider font-bold">
-                              {isExpired ? 'Expired' : 'Soon'}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {lowStockItems.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="text-xs text-amber-700 font-medium">
-                      {lowStockItems.length} item{lowStockItems.length === 1 ? '' : 's'} are running low.
-                    </p>
-                    <div className="flex flex-wrap gap-2 pt-1">
-                      {lowStockItems.map(item => (
-                        <button
-                          key={`low-stock-alert-${item.id}`}
-                          onClick={() => {
-                            setEditingItem(item);
-                            setIsDialogOpen(true);
-                          }}
-                          className="text-xs px-2.5 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-colors border shadow-sm bg-amber-100 hover:bg-amber-200 border-amber-300 text-amber-800"
-                        >
-                          <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
-                          <span className="max-w-[120px] truncate">{item.name}</span>
-                          <span className="text-[10px] opacity-80 uppercase tracking-wider font-bold">
-                            {item.inventoryQuantity} left
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-medium">
+                  {expiredOrSoonItems.length > 0 && (
+                    <button
+                      onClick={() => {
+                        const firstItem = expiredOrSoonItems[0];
+                        setEditingItem(firstItem);
+                        setIsDialogOpen(true);
+                      }}
+                      className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-red-700"
+                    >
+                      {expiredOrSoonItems.length} expiring
+                    </button>
+                  )}
+                  {lowStockItems.length > 0 && (
+                    <button
+                      onClick={() => {
+                        const firstItem = lowStockItems[0];
+                        setEditingItem(firstItem);
+                        setIsDialogOpen(true);
+                      }}
+                      className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-700"
+                    >
+                      {lowStockItems.length} low stock
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 
