@@ -167,6 +167,7 @@ export default function App() {
 
   const [batchModeGroup, setBatchModeGroup] = useState<string | null>(null);
   const [batchSelected, setBatchSelected] = useState<Record<string, boolean>>({});
+  const [mergeSelected, setMergeSelected] = useState<Record<string, boolean>>({});
 
   // Read once on mount — URL params don't change after initial load
   const joinIdRef = useRef(new URLSearchParams(window.location.search).get('join'));
@@ -175,6 +176,7 @@ export default function App() {
   useEffect(() => {
     setBatchModeGroup(null);
     setBatchSelected({});
+    setMergeSelected({});
   }, [groupBy, activeTab]);
 
   useEffect(() => {
@@ -547,6 +549,62 @@ export default function App() {
     } catch (error) {
       console.error("Error manually merging items:", error);
       alert("Failed to merge items.");
+    }
+  };
+
+  const handleMergeSelectedItems = async () => {
+    if (!user || !activeListId) return;
+
+    const selectedItems = items.filter(item => !!item.id && !!mergeSelected[item.id]);
+    if (selectedItems.length < 2) {
+      alert("Select at least two items to merge.");
+      return;
+    }
+
+    const [target, ...sources] = selectedItems;
+    const confirmed = window.confirm(
+      `Merge ${selectedItems.length} selected items into "${target.name}"?`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      const mergedEntries = selectedItems.flatMap(item => item.inventoryEntries || []);
+      const mergedInventoryQuantity = mergedEntries.reduce((sum, entry) => sum + (Number(entry.quantity) || 0), 0);
+      const mergedShoppingQuantity = selectedItems.reduce((sum, item) => sum + (Number(item.shoppingQuantity) || 0), 0);
+      const mergedLocations = Array.from(new Set(mergedEntries.map(entry => entry.location).filter(Boolean) as string[]));
+      const mergedNotes = selectedItems.map(item => item.notes?.trim()).filter(Boolean).join("\n");
+      const mergedPriceHistory = selectedItems.flatMap(item => item.priceHistory || []);
+      const mergedUnprocessed = selectedItems.reduce((sum, item) => sum + (Number(item.unprocessedQuantity) || 0), 0);
+
+      await updateDoc(doc(db, "lists", activeListId, "items", target.id!), removeUndefined({
+        category: target.category,
+        inventoryEntries: mergedEntries,
+        inventoryQuantity: mergedInventoryQuantity,
+        shoppingQuantity: mergedShoppingQuantity,
+        locations: mergedLocations,
+        notes: mergedNotes,
+        priceHistory: mergedPriceHistory,
+        unprocessedQuantity: mergedUnprocessed > 0 ? mergedUnprocessed : undefined,
+        unit: target.unit || selectedItems.find(item => item.unit)?.unit,
+        isHiddenSuggestion: false,
+        updatedAt: serverTimestamp()
+      }));
+
+      for (const source of sources) {
+        await deleteDoc(doc(db, "lists", activeListId, "items", source.id!));
+      }
+
+      setMergeSelected({});
+      setLastAction({
+        type: 'update',
+        itemId: target.id!,
+        itemData: target,
+        description: `Merged ${selectedItems.length} selected items into "${target.name}"`
+      });
+    } catch (error) {
+      console.error("Error merging selected items:", error);
+      alert("Failed to merge selected items.");
     }
   };
 
@@ -1196,8 +1254,20 @@ export default function App() {
 
   const lowStockItems = useMemo(() => {
     return items
-      .filter(item => item.inventoryQuantity > 0 && item.inventoryQuantity <= 2 && !item.isHiddenSuggestion)
-      .sort((a, b) => a.inventoryQuantity - b.inventoryQuantity || a.name.localeCompare(b.name));
+      .filter(item => {
+        if (item.isHiddenSuggestion) return false;
+        if (item.restockPolicy !== 'essential') return false;
+        if ((Number(item.inventoryQuantity) || 0) <= 0) return false;
+        const target = Number(item.restockTarget) || 0;
+        if (target <= 0) return false;
+        const servings = (Number(item.inventoryQuantity) || 0) * (Number(item.servingsPerUnit) || 1);
+        return servings < target;
+      })
+      .sort((a, b) => {
+        const aServings = (Number(a.inventoryQuantity) || 0) * (Number(a.servingsPerUnit) || 1);
+        const bServings = (Number(b.inventoryQuantity) || 0) * (Number(b.servingsPerUnit) || 1);
+        return aServings - bServings || a.name.localeCompare(b.name);
+      });
   }, [items]);
 
   const replenishmentSuggestions = useMemo(() => {
@@ -1388,6 +1458,7 @@ export default function App() {
 
   const renderInventoryItems = (searchString?: string) => {
     const itemsToFilter = searchString !== undefined ? items : inventoryItems;
+    const selectedMergeCount = Object.values(mergeSelected).filter(Boolean).length;
     
     const filteredItems = itemsToFilter.filter(item => {
       if (searchString !== undefined) {
@@ -1470,16 +1541,19 @@ export default function App() {
       );
     }
 
+    const getActiveGroupCount = (groupItems: GroceryItem[]) => groupItems.filter(item => (Number(item.inventoryQuantity) || 0) > 0).length;
+
     let groups: { name: string; items: GroceryItem[] }[] = [];
     const effectiveGroupBy = searchString !== undefined ? 'none' : groupBy;
 
     if (effectiveGroupBy === 'category') {
       const g = filteredItems.reduce((acc, item) => {
+        if ((Number(item.inventoryQuantity) || 0) <= 0) return acc;
         if (!acc[item.category]) acc[item.category] = [];
         acc[item.category].push(item);
         return acc;
       }, {} as Record<string, GroceryItem[]>);
-      groups = CATEGORIES.filter(c => g[c]?.length > 0).map(c => ({ name: c, items: g[c] }));
+      groups = CATEGORIES.filter(c => (g[c]?.length ?? 0) > 0).map(c => ({ name: c, items: g[c] }));
     } else if (effectiveGroupBy === 'location') {
       const g: Record<string, GroceryItem[]> = {};
       filteredItems.forEach(item => {
@@ -1512,6 +1586,21 @@ export default function App() {
     } else {
       groups = [{ name: 'Search Results', items: filteredItems }];
     }
+
+    const mergeToolbar = activeTab === 'inventory' && !searchString && selectedMergeCount > 0 ? (
+      <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 shadow-sm">
+        <div className="text-sm font-medium text-amber-800">
+          {selectedMergeCount} selected item{selectedMergeCount === 1 ? '' : 's'}
+        </div>
+        <Button
+          size="sm"
+          onClick={handleMergeSelectedItems}
+          className="bg-amber-600 hover:bg-amber-700 text-white font-semibold"
+        >
+          Merge selected
+        </Button>
+      </div>
+    ) : null;
 
     const content = groups.map(group => {
       const gridContent = (
@@ -1583,6 +1672,19 @@ export default function App() {
                           newSelected[`${item.id}_${entry.id}`] = !isSelected;
                         });
                         setBatchSelected(newSelected);
+                      }}
+                    />
+                  </div>
+                )}
+                {!isThisGroupBatch && activeTab === 'inventory' && (
+                  <div className="pt-0.5" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                      checked={!!mergeSelected[item.id!]}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        setMergeSelected(prev => ({ ...prev, [item.id!]: !prev[item.id!] }));
                       }}
                     />
                   </div>
@@ -1929,7 +2031,7 @@ export default function App() {
             onContextMenu={(e) => handleContextMenu(e, group.name)}
           >
             <div className="flex items-center gap-2">
-               {group.name} <Badge variant="secondary" className="ml-2 bg-gray-100 text-gray-600 border-none font-medium">{group.items.length}</Badge>
+               {group.name} <Badge variant="secondary" className="ml-2 bg-gray-100 text-gray-600 border-none font-medium">{getActiveGroupCount(group.items)}</Badge>
             </div>
           </AccordionTrigger>
           <AccordionContent className="px-4 pt-2">
@@ -1941,11 +2043,17 @@ export default function App() {
     });
 
     return searchString !== undefined ? (
-       <div className="w-full">{content}</div>
+       <div className="w-full">
+         {mergeToolbar}
+         {content}
+       </div>
     ) : (
-      <Accordion className="space-y-4 mt-4 sm:mt-6 w-full">
-        {content}
-      </Accordion>
+      <>
+        {mergeToolbar}
+        <Accordion className="space-y-4 mt-4 sm:mt-6 w-full">
+          {content}
+        </Accordion>
+      </>
     );
   };
 
@@ -2164,7 +2272,7 @@ export default function App() {
               onContextMenu={(e) => handleContextMenu(e, group.name)}
             >
               <div className="flex items-center gap-2">
-                 {group.name} <Badge variant="secondary" className="ml-2 bg-gray-100 text-gray-600 border-none font-medium">{group.items.length}</Badge>
+                 {group.name} <Badge variant="secondary" className="ml-2 bg-gray-100 text-gray-600 border-none font-medium">{group.items.filter(item => (Number(item.inventoryQuantity) || 0) > 0).length}</Badge>
               </div>
             </AccordionTrigger>
             <AccordionContent className="px-4 pt-2">

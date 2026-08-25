@@ -60,6 +60,8 @@ export interface PriceEntry {
   dealQuantity?: number;
 }
 
+export type RestockPolicy = 'essential' | 'optional' | 'manual';
+
 export interface GroceryItem {
   id?: string;
   name: string;
@@ -70,6 +72,10 @@ export interface GroceryItem {
   shoppingStore?: string;
   unprocessedQuantity?: number;
   unit?: string;
+  servingSize?: number;
+  servingsPerUnit?: number;
+  restockPolicy?: RestockPolicy;
+  restockTarget?: number;
   locations?: string[];
   location?: string; // Backwards compatibility
   notes: string;

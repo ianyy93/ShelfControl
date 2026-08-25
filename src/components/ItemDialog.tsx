@@ -6,7 +6,7 @@ import { Label } from "./ui/label";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { Textarea } from "./ui/textarea";
 import { X, Plus, Minus, Trash2, Split } from "lucide-react";
-import { GroceryItem, CATEGORIES, Category, InventoryEntry, PriceEntry } from "../types";
+import { GroceryItem, CATEGORIES, Category, InventoryEntry, PriceEntry, RestockPolicy } from "../types";
 import { Badge } from "./ui/badge";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
@@ -145,6 +145,9 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
   const [shoppingQuantity, setShoppingQuantity] = useState<string | number>(0);
   const [shoppingStore, setShoppingStore] = useState("");
   const [inventoryEntries, setInventoryEntries] = useState<InventoryEntry[]>([]);
+  const [restockPolicy, setRestockPolicy] = useState<RestockPolicy>('manual');
+  const [restockTarget, setRestockTarget] = useState<number>(0);
+  const [servingsPerUnit, setServingsPerUnit] = useState<number>(1);
 
   const [loading, setLoading] = useState(false);
 
@@ -188,6 +191,9 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
         setShoppingQuantity(item.shoppingQuantity || 0);
         setShoppingStore(item.shoppingStore || "");
         setInventoryEntries(item.inventoryEntries || []);
+        setRestockPolicy(item.restockPolicy || 'manual');
+        setRestockTarget(Number(item.restockTarget) || 0);
+        setServingsPerUnit(Number(item.servingsPerUnit) || 1);
         
         if (item.unprocessedQuantity && item.unprocessedQuantity > 0) {
           setProcessQuantity(item.unprocessedQuantity);
@@ -239,6 +245,9 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
         setShoppingQuantity(0);
         setShoppingStore("");
         setInventoryEntries([]);
+        setRestockPolicy('manual');
+        setRestockTarget(0);
+        setServingsPerUnit(1);
         if (defaultMode === 'shopping') {
             setShoppingQuantity(1);
         } else if (defaultMode === 'inventory') {
@@ -298,7 +307,10 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
       inventoryEntries,
       inventoryQuantity: derivedInventoryQuant,
       shoppingQuantity: Number(shoppingQuantity) || 0,
-      shoppingStore
+      shoppingStore,
+      restockPolicy,
+      restockTarget: Number(restockTarget) || 0,
+      servingsPerUnit: Number(servingsPerUnit) || 1
     };
 
     if (item && item.unprocessedQuantity && item.unprocessedQuantity > 0) {
@@ -532,6 +544,19 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                     ))}
                   </select>
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="restock-policy" className="text-xs font-semibold text-gray-500 uppercase tracking-tight">Restock</Label>
+                  <select
+                    id="restock-policy"
+                    className={selectStyles}
+                    value={restockPolicy}
+                    onChange={e => setRestockPolicy(e.target.value as RestockPolicy)}
+                  >
+                    <option value="manual">Manual</option>
+                    <option value="optional">Optional</option>
+                    <option value="essential">Essential</option>
+                  </select>
+                </div>
                 {category === 'Other' && (
                   <div className="space-y-2 animate-in fade-in slide-in-from-top-1 duration-200">
                      <Label htmlFor="custom-category" className="text-xs font-semibold text-gray-500 uppercase tracking-tight italic">Other Name</Label>
@@ -590,6 +615,33 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                     </div>
                   </>
                 )}
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="servings-per-unit" className="text-xs font-semibold text-gray-500 uppercase tracking-tight">Servings / Unit</Label>
+                <Input
+                  id="servings-per-unit"
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value={servingsPerUnit}
+                  onChange={e => setServingsPerUnit(Number(e.target.value) || 0)}
+                  className="h-8"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="restock-target" className="text-xs font-semibold text-gray-500 uppercase tracking-tight">Restock Target</Label>
+                <Input
+                  id="restock-target"
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value={restockTarget}
+                  onChange={e => setRestockTarget(Number(e.target.value) || 0)}
+                  className="h-8"
+                />
+              </div>
             </div>
            </>
           )}
