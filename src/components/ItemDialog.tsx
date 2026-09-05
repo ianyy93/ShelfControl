@@ -665,7 +665,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                </div>
                
                {inventoryEntries.map((entry, index) => (
-                 <div key={entry.id} id={`entry-${entry.id}`} className="p-3 bg-gray-50 border rounded-lg space-y-3 relative group">
+                 <div key={entry.id} id={`entry-${entry.id}`} className="p-2.5 bg-gray-50 border rounded-lg space-y-2.5 relative group">
                    <div className="flex justify-between items-center gap-2">
                      <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Entry #{index + 1}</span>
                      <div className="flex gap-1">
@@ -681,13 +681,13 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                    </div>
                    
                    {/* Location, Quantity, Amount, Unit layout */}
-                   <div className="grid grid-cols-2 gap-3 items-start">
+                   <div className="grid grid-cols-2 gap-2 items-start">
                      <div className="space-y-1.5 col-span-2">
                        <Label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Location</Label>
                        <LocationSelect value={entry.location} onChange={v => updateInventoryEntry(entry.id, 'location', v)} locations={locations} className={selectStyles} />
                      </div>
                      <div className="space-y-1.5">
-                       <Label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Quantity (Count)</Label>
+                       <Label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Package count</Label>
                        <div className="flex items-center gap-1.5">
                          <Button type="button" variant="outline" size="icon" className="h-8 w-8 shrink-0 border-gray-300" onClick={() => updateInventoryEntry(entry.id, 'quantity', Math.max(0.01, Number(entry.quantity) - 1))}>
                            <Minus className="w-3.5 h-3.5" />
@@ -706,7 +706,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                        </div>
                      </div>
                      <div className="space-y-1.5">
-                       <Label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{entry.unit === 'pcs' ? 'Number of Pcs' : 'Amount per count'}</Label>
+                       <Label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{entry.unit === 'pcs' ? 'Pieces / package' : 'Amount / package'}</Label>
                        <Input 
                          type="number" step="any" min="0" 
                          value={entry.amount || ""} 
@@ -744,7 +744,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                    </div>
 
                    {/* Opened Toggle */}
-                   <div className="bg-white border rounded p-2 mt-2 space-y-2">
+                   <div className="bg-white border rounded p-2 mt-1 space-y-2">
                      <div className="flex items-center space-x-2">
                        <input 
                          type="checkbox" 
@@ -776,7 +776,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                    </div>
 
                    {/* Label, Tags */}
-                   <div className="grid grid-cols-2 gap-3 items-start mt-3">
+                   <div className="grid grid-cols-2 gap-2 items-start mt-2">
                      <div className="space-y-1.5">
                        <Label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Label</Label>
                        <Input type="text" value={entry.label || ""} onChange={e => updateInventoryEntry(entry.id, 'label', e.target.value)} placeholder="e.g. For stir fry" className="h-8 text-sm bg-white" />

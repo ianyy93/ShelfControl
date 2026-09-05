@@ -164,6 +164,7 @@ export default function App() {
   const [filterLoc, setFilterLoc] = useState<string>('All');
   const [filterTag, setFilterTag] = useState<string>('All');
   const [filterExpiry, setFilterExpiry] = useState<string>('All');
+  const [bulkCategoryTarget, setBulkCategoryTarget] = useState<string>('All');
 
   const [batchModeGroup, setBatchModeGroup] = useState<string | null>(null);
   const [batchSelected, setBatchSelected] = useState<Record<string, boolean>>({});
@@ -684,10 +685,9 @@ export default function App() {
       const todayStr = new Date().toISOString().split('T')[0];
       const purchaseDate = scanned.dateBought || todayStr;
 
-      const entryId = crypto.randomUUID();
-      const scanEntries = (scanned.entries && scanned.entries.length > 0 ? scanned.entries : [{ quantity: scanned.quantity, unit: scanned.unit || "", location: "", amount: undefined, expiryDate: "", dateBought: purchaseDate, label: "", tags: [] }])
+      const baseEntries = (scanned.entries && scanned.entries.length > 0 ? scanned.entries : [{ quantity: scanned.quantity, unit: scanned.unit || "", location: "", amount: undefined, expiryDate: "", dateBought: purchaseDate, label: "", tags: [] }])
         .map((entry, index) => ({
-          id: `${entryId}-${index}`,
+          id: `${crypto.randomUUID()}-${index}`,
           location: entry.location || "",
           quantity: Number(entry.quantity ?? scanned.quantity) || 1,
           amount: entry.amount !== undefined ? Number(entry.amount) : undefined,
@@ -699,28 +699,19 @@ export default function App() {
           tags: entry.tags || [],
         }));
 
-      const newEntry: InventoryEntry = {
-        id: entryId,
-        location: scanEntries[0]?.location || "",
-        quantity: scanEntries[0]?.quantity || scanned.quantity,
-        amount: scanEntries[0]?.amount,
-        unit: scanEntries[0]?.unit || scanned.unit || "",
-        expiryDate: scanEntries[0]?.expiryDate,
-        dateBought: scanEntries[0]?.dateBought || purchaseDate,
-        dateAdded: todayStr,
-        label: scanEntries[0]?.label,
-        tags: scanEntries[0]?.tags,
-      };
+      const compiledQty = baseEntries.reduce((sum, entry) => sum + (Number(entry.quantity) || 0), 0) || Number(scanned.quantity) || 1;
+      const updatedLocations = Array.from(new Set(baseEntries.map(e => e.location).filter(Boolean)));
 
       if (existingMatch && existingMatch.id) {
-        const updatedEntries = [...(existingMatch.inventoryEntries || []), ...scanEntries];
-        const updatedLocations = Array.from(new Set(updatedEntries.map(e => e.location).filter(Boolean)));
-        
+        const updatedEntries = [...(existingMatch.inventoryEntries || []), ...baseEntries];
         const updateData: any = {
-          inventoryQuantity: (existingMatch.inventoryQuantity || 0) + scanned.quantity,
+          inventoryQuantity: (existingMatch.inventoryQuantity || 0) + compiledQty,
           inventoryEntries: updatedEntries,
           locations: updatedLocations,
-          updatedAt: serverTimestamp()
+          updatedAt: serverTimestamp(),
+          restockPolicy: existingMatch.restockPolicy || 'manual',
+          restockTarget: Number(existingMatch.restockTarget) || 0,
+          servingsPerUnit: Number(existingMatch.servingsPerUnit) || 1,
         };
 
         if (scanned.price !== undefined && scanned.store) {
@@ -729,9 +720,9 @@ export default function App() {
             date: purchaseDate,
             totalPrice: scanned.price,
             unitPrice: scanned.unitPrice,
-            priceQuantity: scanned.priceQuantity ?? scanned.quantity ?? 1,
+            priceQuantity: scanned.priceQuantity ?? compiledQty ?? 1,
             priceUnit: scanned.priceUnit || scanned.unit || "pcs",
-            quantity: scanned.quantity,
+            quantity: compiledQty,
             quantityUnit: scanned.unit || scanned.priceUnit || "pcs",
           });
 
@@ -743,12 +734,16 @@ export default function App() {
         const newItem: Partial<GroceryItem> = {
           name: trimmedName,
           category: scanned.category,
-          inventoryQuantity: scanned.quantity,
+          inventoryQuantity: compiledQty,
           shoppingQuantity: 0,
-          inventoryEntries: scanEntries,
-          locations: [],
-          location: "",
+          inventoryEntries: baseEntries,
+          locations: updatedLocations,
+          location: updatedLocations[0] || "",
           unit: scanned.unit || "",
+          servingSize: 1,
+          servingsPerUnit: 1,
+          restockPolicy: 'manual',
+          restockTarget: 0,
           notes: `Imported via Gemini Receipt Scan on ${purchaseDate}`,
           listId: activeListId,
           creatorId: user.uid,
@@ -762,9 +757,9 @@ export default function App() {
             date: purchaseDate,
             totalPrice: scanned.price,
             unitPrice: scanned.unitPrice,
-            priceQuantity: scanned.priceQuantity ?? scanned.quantity ?? 1,
+            priceQuantity: scanned.priceQuantity ?? compiledQty ?? 1,
             priceUnit: scanned.priceUnit || scanned.unit || "pcs",
-            quantity: scanned.quantity,
+            quantity: compiledQty,
             quantityUnit: scanned.unit || scanned.priceUnit || "pcs",
           })];
         }
@@ -1252,6 +1247,10 @@ export default function App() {
     });
   }, [items]);
 
+  const getEffectiveServings = (item: GroceryItem) => {
+    return (Number(item.inventoryQuantity) || 0) * (Number(item.servingsPerUnit) || 1);
+  };
+
   const lowStockItems = useMemo(() => {
     return items
       .filter(item => {
@@ -1260,14 +1259,9 @@ export default function App() {
         if ((Number(item.inventoryQuantity) || 0) <= 0) return false;
         const target = Number(item.restockTarget) || 0;
         if (target <= 0) return false;
-        const servings = (Number(item.inventoryQuantity) || 0) * (Number(item.servingsPerUnit) || 1);
-        return servings < target;
+        return getEffectiveServings(item) < target;
       })
-      .sort((a, b) => {
-        const aServings = (Number(a.inventoryQuantity) || 0) * (Number(a.servingsPerUnit) || 1);
-        const bServings = (Number(b.inventoryQuantity) || 0) * (Number(b.servingsPerUnit) || 1);
-        return aServings - bServings || a.name.localeCompare(b.name);
-      });
+      .sort((a, b) => getEffectiveServings(a) - getEffectiveServings(b) || a.name.localeCompare(b.name));
   }, [items]);
 
   const replenishmentSuggestions = useMemo(() => {
@@ -1588,17 +1582,47 @@ export default function App() {
     }
 
     const mergeToolbar = activeTab === 'inventory' && !searchString && selectedMergeCount > 0 ? (
-      <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 shadow-sm">
+      <div className="mb-4 flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
         <div className="text-sm font-medium text-amber-800">
           {selectedMergeCount} selected item{selectedMergeCount === 1 ? '' : 's'}
         </div>
-        <Button
-          size="sm"
-          onClick={handleMergeSelectedItems}
-          className="bg-amber-600 hover:bg-amber-700 text-white font-semibold"
-        >
-          Merge selected
-        </Button>
+        <div className="flex items-center gap-2">
+          <select
+            value={bulkCategoryTarget}
+            onChange={(e) => setBulkCategoryTarget(e.target.value)}
+            className="h-8 rounded-lg border border-amber-200 bg-white px-2 text-xs text-gray-700"
+            title="Re-categorize selected items"
+          >
+            <option value="All">Set category</option>
+            {CATEGORIES.map(cat => (
+              <option key={cat} value={cat}>{cat}</option>
+            ))}
+          </select>
+          <Button
+            size="sm"
+            onClick={async () => {
+              const nextCategory = bulkCategoryTarget;
+              if (nextCategory === 'All') return;
+              const selectedIds = items.filter(item => !!item.id && !!mergeSelected[item.id]).map(item => item.id!);
+              for (const id of selectedIds) {
+                await updateDoc(doc(db, "lists", activeListId!, "items", id), { category: nextCategory, updatedAt: serverTimestamp() });
+              }
+              setMergeSelected({});
+              setBulkCategoryTarget('All');
+            }}
+            className="bg-amber-600 hover:bg-amber-700 text-white font-semibold"
+          >
+            Apply
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleMergeSelectedItems}
+            className="text-amber-800 hover:bg-amber-100 font-semibold"
+          >
+            Merge
+          </Button>
+        </div>
       </div>
     ) : null;
 
