@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildReceiptPriceEntry, deriveUnitPrice, normalizeUnit, resolveReceiptDate } from './receipt.ts';
+import { buildReceiptPriceEntry, deriveUnitPrice, normalizeUnit, parseReceiptText, resolveReceiptDate } from './receipt.ts';
+import { getAvailableUnopenedStock, getEffectiveRestockTarget, isItemBelowRestockTarget } from './restock.ts';
 
 test('normalizes common unit aliases', () => {
   assert.equal(normalizeUnit('kilograms'), 'kg');
@@ -59,4 +60,42 @@ test('uses the receipt price basis quantity for price history entries', () => {
   assert.equal(entry.quantity, 5);
   assert.equal(entry.unitStr, 'kg');
   assert.equal(entry.price, 2.5);
+});
+
+test('parses a simple receipt text row into a deterministic item', () => {
+  const parsed = parseReceiptText(
+    `BROCCOLI 1.5 kg $4.99\nBANANAS 2.00 $1.50\nTOTAL $6.49`
+  );
+
+  assert.equal(parsed.items.length >= 2, true);
+  assert.equal(parsed.items[0].name.toLowerCase().includes('broccoli'), true);
+  assert.equal(parsed.items[0].quantity, 1.5);
+  assert.equal(parsed.items[0].unit, 'kg');
+  assert.equal(parsed.items[0].price, 4.99);
+});
+
+test('falls back to pcs when the receipt contains counted items without a unit', () => {
+  const parsed = parseReceiptText(`APPLES 3 $2.49\nORANGES 4 $3.25`);
+
+  assert.equal(parsed.items[0].unit, 'pcs');
+  assert.equal(parsed.items[0].quantity, 3);
+  assert.equal(parsed.items[0].price, 2.49);
+});
+
+test('category defaults apply when item target is missing and zero-stock alerts are triggered at 0', () => {
+  const item = {
+    name: 'Carrots',
+    category: 'vegetables',
+    inventoryQuantity: 0,
+    shoppingQuantity: 0,
+    notes: '',
+    listId: 'list-1',
+    creatorId: 'u1',
+    restockPolicy: 'essential' as const,
+    inventoryEntries: [{ id: 'e1', location: '', quantity: 0, isOpened: false }],
+  };
+
+  assert.equal(getEffectiveRestockTarget(item as any), 3);
+  assert.equal(getAvailableUnopenedStock(item as any), 0);
+  assert.equal(isItemBelowRestockTarget(item as any), true);
 });

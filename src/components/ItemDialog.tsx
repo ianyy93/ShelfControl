@@ -192,7 +192,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
         setShoppingStore(item.shoppingStore || "");
         setInventoryEntries(item.inventoryEntries || []);
         setRestockPolicy(item.restockPolicy || 'manual');
-        setRestockTarget(Number(item.restockTarget) || 0);
+        setRestockTarget(item.restockTarget !== undefined && item.restockTarget !== null && item.restockTarget !== '' ? Number(item.restockTarget) : 0);
         setServingsPerUnit(Number(item.servingsPerUnit) || 1);
         
         if (item.unprocessedQuantity && item.unprocessedQuantity > 0) {
@@ -653,6 +653,26 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                <span className="mx-2 opacity-30">|</span> 
                Unit Price: ${(Number(price) / Number(priceQuantity)).toFixed(2)} / {priceUnit || unit || "pcs"}
              </div>
+          )}
+
+          {item && item.activityHistory && item.activityHistory.length > 0 && (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+              <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-500">Activity History</div>
+              <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                {[...item.activityHistory].sort((a, b) => b.date.localeCompare(a.date)).map(entry => (
+                  <div key={entry.id} className="flex items-center justify-between gap-2 border-b border-gray-200 pb-1 last:border-b-0 last:pb-0">
+                    <div>
+                      <div className="text-xs font-medium text-gray-700 capitalize">{entry.type}</div>
+                      <div className="text-[10px] text-gray-500">{entry.date}</div>
+                    </div>
+                    <div className="text-right text-[10px] text-gray-600">
+                      <div>{entry.quantity} {entry.unit || item.unit || 'pcs'}</div>
+                      {entry.note && <div className="text-gray-400">{entry.note}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
 
           {mode === 'inventory' && (

@@ -1,4 +1,9 @@
 export const CATEGORIES = [
+  "vegetables",
+  "fruits",
+  "soup",
+  "noodles",
+  "seasoning",
   "Produce",
   "Dairy & Eggs",
   "Meat & Seafood",
@@ -60,6 +65,15 @@ export interface PriceEntry {
   dealQuantity?: number;
 }
 
+export interface ActivityEntry {
+  id: string;
+  type: 'added' | 'consumed';
+  quantity: number;
+  unit?: string;
+  date: string;
+  note?: string;
+}
+
 export type RestockPolicy = 'essential' | 'optional' | 'manual';
 
 export interface GroceryItem {
@@ -76,6 +90,7 @@ export interface GroceryItem {
   servingsPerUnit?: number;
   restockPolicy?: RestockPolicy;
   restockTarget?: number;
+  activityHistory?: ActivityEntry[];
   locations?: string[];
   location?: string; // Backwards compatibility
   notes: string;

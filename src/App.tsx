@@ -16,6 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { ReceiptScanDialog } from "./components/ReceiptScanDialog";
 import { Sparkles, Receipt, GitMerge } from "lucide-react";
 import { buildReceiptPriceEntry, deriveUnitPrice } from "./lib/receipt";
+import { getAvailableUnopenedStock, getEffectiveRestockTarget } from "./lib/restock";
 import { Badge } from "./components/ui/badge";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "./components/ui/accordion";
 import { LineChart as RechartsLineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
@@ -796,12 +797,13 @@ export default function App() {
     const newShop = Math.max(0, item.shoppingQuantity + shopDelta);
     
     let newEntries = [...(item.inventoryEntries || [])];
+    const activityStamp = new Date().toISOString().split('T')[0];
 
     if (invDelta > 0) {
       let defaultLoc = locationTrigger || item.location || item.locations?.[0] || 'Unassigned';
       if (defaultLoc === 'Unassigned') defaultLoc = '';
       const entry = newEntries.find(e => !e.label && !e.expiryDate && (e.location || '') === defaultLoc);
-      const today = new Date().toISOString().split('T')[0];
+      const today = activityStamp;
       if (entry) {
         entry.quantity += invDelta;
         entry.dateBought = today;
@@ -850,12 +852,19 @@ export default function App() {
     }
     
     const newLocs = Array.from(new Set(newEntries.map(e => e.location).filter(Boolean)));
+    const nextHistory = [...(item.activityHistory || [])];
+    if (invDelta > 0) {
+      nextHistory.push({ id: crypto.randomUUID(), type: 'added', quantity: Math.abs(invDelta), unit: item.unit || 'pcs', date: activityStamp, note: 'Inventory added' });
+    } else if (invDelta < 0) {
+      nextHistory.push({ id: crypto.randomUUID(), type: 'consumed', quantity: Math.abs(invDelta), unit: item.unit || 'pcs', date: activityStamp, note: 'Inventory consumed' });
+    }
 
     const updateData: any = {
       inventoryQuantity: newInv,
       shoppingQuantity: newShop,
       inventoryEntries: newEntries,
       locations: newLocs,
+      activityHistory: nextHistory,
       updatedAt: serverTimestamp()
     };
 
@@ -1256,12 +1265,12 @@ export default function App() {
       .filter(item => {
         if (item.isHiddenSuggestion) return false;
         if (item.restockPolicy !== 'essential') return false;
-        if ((Number(item.inventoryQuantity) || 0) <= 0) return false;
-        const target = Number(item.restockTarget) || 0;
-        if (target <= 0) return false;
-        return getEffectiveServings(item) < target;
+        const hasExplicitTarget = item.restockTarget !== undefined && item.restockTarget !== null && item.restockTarget !== '';
+        const target = getEffectiveRestockTarget(item);
+        if (!hasExplicitTarget && target === 0) return false;
+        return getAvailableUnopenedStock(item) <= target;
       })
-      .sort((a, b) => getEffectiveServings(a) - getEffectiveServings(b) || a.name.localeCompare(b.name));
+      .sort((a, b) => getAvailableUnopenedStock(a) - getAvailableUnopenedStock(b) || a.name.localeCompare(b.name));
   }, [items]);
 
   const replenishmentSuggestions = useMemo(() => {
