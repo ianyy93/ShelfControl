@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildReceiptPriceEntry, deriveUnitPrice, normalizeUnit, parseReceiptText, resolveReceiptDate } from './receipt.ts';
+import { filterValidInventoryEntries } from './inventory.ts';
 import { getAvailableUnopenedStock, getEffectiveRestockTarget, isItemBelowRestockTarget } from './restock.ts';
 
 test('normalizes common unit aliases', () => {
@@ -98,4 +99,15 @@ test('category defaults apply when item target is missing and zero-stock alerts 
   assert.equal(getEffectiveRestockTarget(item as any), 3);
   assert.equal(getAvailableUnopenedStock(item as any), 0);
   assert.equal(isItemBelowRestockTarget(item as any), true);
+});
+
+test('keeps unopened pcs entries when an opened entry is reduced to zero', () => {
+  const entries = [
+    { id: 'opened-1', location: '', quantity: 0, unit: 'pcs', isOpened: true, amount: undefined },
+    { id: 'unopened-1', location: '', quantity: 2, unit: 'pcs', isOpened: false },
+    { id: 'unopened-2', location: '', quantity: 1, unit: 'pcs', isOpened: false },
+  ] as any;
+
+  const remaining = filterValidInventoryEntries(entries).map(e => e.id);
+  assert.deepEqual(remaining, ['unopened-1', 'unopened-2']);
 });

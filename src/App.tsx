@@ -16,6 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { ReceiptScanDialog } from "./components/ReceiptScanDialog";
 import { Sparkles, Receipt, GitMerge } from "lucide-react";
 import { buildReceiptPriceEntry, deriveUnitPrice } from "./lib/receipt";
+import { filterValidInventoryEntries } from "./lib/inventory";
 import { getAvailableUnopenedStock, getEffectiveRestockTarget } from "./lib/restock";
 import { Badge } from "./components/ui/badge";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "./components/ui/accordion";
@@ -1075,12 +1076,9 @@ export default function App() {
     
     if (!isModified) return;
 
-    // Filter out empty boxes!
-    newEntries = newEntries.filter(e => {
-        if (e.quantity <= 0) return false;
-        if (e.unit === 'pcs' && (e.amount === undefined || e.amount <= 0)) return false;
-        return true;
-    });
+    // Filter out empty boxes, but keep valid unopened entries even if they do not yet
+    // have a per-package amount set. Missing `amount` is not equivalent to zero stock.
+    newEntries = filterValidInventoryEntries(newEntries);
     
     const newInv = newEntries.reduce((sum, e) => sum + e.quantity, 0);
     const newLocs = Array.from(new Set(newEntries.map(e => e.location).filter(Boolean)));
