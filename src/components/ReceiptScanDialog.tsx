@@ -1,4 +1,5 @@
 import React, { useState, useRef } from "react";
+import Tesseract from "tesseract.js";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -210,6 +211,7 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
   };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const localFileInputRef = useRef<HTMLInputElement>(null);
   const stepIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const loadingMessages = [
@@ -474,6 +476,44 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
     setParsedItems(prev => [...prev, newItem]);
   };
 
+  const parseReceiptData = (text: string, sourceLabel = "receipt text") => {
+    const parsed = parseReceiptText(text);
+    const items: ParsedItem[] = (parsed.items || []).map((item: any, idx: number) => {
+      const unit = normalizeUnit(item.unit || "pcs");
+      const priceQuantity = Number(item.priceQuantity ?? item.quantity ?? 1) || 1;
+      const priceUnit = normalizeUnit(item.priceUnit || item.unit || unit);
+
+      return {
+        id: `parsed-local-${sourceLabel}-${idx}-${Date.now()}`,
+        name: item.name || "Unknown Item",
+        quantity: Number(item.quantity) || 1,
+        unit,
+        category: (CATEGORIES.includes(item.category) ? item.category : "Other") as Category,
+        price: typeof item.price === "number" ? Number(item.price) : undefined,
+        unitPrice: typeof item.unitPrice === "number" ? Number(item.unitPrice) : undefined,
+        priceQuantity,
+        priceUnit,
+        notes: item.notes || "",
+        entries: Array.isArray(item.entries) ? item.entries.map((entry: any) => ({
+          location: entry.location || "",
+          quantity: entry.quantity !== undefined ? Number(entry.quantity) : 1,
+          amount: entry.amount !== undefined ? Number(entry.amount) : undefined,
+          unit: normalizeUnit(entry.unit || unit),
+          expiryDate: entry.expiryDate || "",
+          dateBought: entry.dateBought || "",
+          label: entry.label || "",
+          tags: Array.isArray(entry.tags) ? entry.tags : [],
+        })) : [{ quantity: Number(item.quantity) || 1, unit, amount: undefined, location: "", dateBought: "", expiryDate: "", label: "", tags: [] }],
+      };
+    });
+
+    return {
+      store: parsed.store || "",
+      dateBought: parsed.dateBought || new Date().toISOString().split("T")[0],
+      items,
+    };
+  };
+
   const handleParseText = () => {
     const rawText = receiptText.trim();
     if (!rawText) {
@@ -486,45 +526,52 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
     setIsParsed(false);
 
     try {
-      const parsed = parseReceiptText(rawText);
-      const items: ParsedItem[] = (parsed.items || []).map((item: any, idx: number) => {
-        const unit = normalizeUnit(item.unit || "pcs");
-        const priceQuantity = Number(item.priceQuantity ?? item.quantity ?? 1) || 1;
-        const priceUnit = normalizeUnit(item.priceUnit || item.unit || unit);
-
-        return {
-          id: `parsed-local-${idx}-${Date.now()}`,
-          name: item.name || "Unknown Item",
-          quantity: Number(item.quantity) || 1,
-          unit,
-          category: (CATEGORIES.includes(item.category) ? item.category : "Other") as Category,
-          price: typeof item.price === "number" ? Number(item.price) : undefined,
-          unitPrice: typeof item.unitPrice === "number" ? Number(item.unitPrice) : undefined,
-          priceQuantity,
-          priceUnit,
-          notes: item.notes || "",
-          entries: Array.isArray(item.entries) ? item.entries.map((entry: any) => ({
-            location: entry.location || "",
-            quantity: entry.quantity !== undefined ? Number(entry.quantity) : 1,
-            amount: entry.amount !== undefined ? Number(entry.amount) : undefined,
-            unit: normalizeUnit(entry.unit || unit),
-            expiryDate: entry.expiryDate || "",
-            dateBought: entry.dateBought || "",
-            label: entry.label || "",
-            tags: Array.isArray(entry.tags) ? entry.tags : [],
-          })) : [{ quantity: Number(item.quantity) || 1, unit, amount: undefined, location: "", dateBought: "", expiryDate: "", label: "", tags: [] }],
-        };
-      });
-
-      const nextDate = sanitizeReceiptDate(parsed.dateBought || new Date().toISOString().split("T")[0]);
-      setParsedStore(parsed.store || "");
+      const parsed = parseReceiptData(rawText, "text");
+      const nextDate = sanitizeReceiptDate(parsed.dateBought);
+      setParsedStore(parsed.store);
       setParsedDate(resolveReceiptDate(nextDate, { fallbackDate: new Date().toISOString().split("T")[0], fileDate: undefined }));
-      setParsedItems(items);
+      setParsedItems(parsed.items);
       setIsParsed(true);
     } catch (err: any) {
       setError(err?.message || "Failed to parse receipt text.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleLocalImageParse = async (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      setError("Please upload an image file (PNG, JPG, etc.) in local mode.");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setIsParsed(false);
+
+    try {
+      const { data } = await Tesseract.recognize(file, "eng");
+      const text = data?.text || "";
+      if (!text.trim()) {
+        throw new Error("No text could be read from that receipt image.");
+      }
+
+      const parsed = parseReceiptData(text, "image");
+      const nextDate = sanitizeReceiptDate(parsed.dateBought);
+      setParsedStore(parsed.store);
+      setParsedDate(resolveReceiptDate(nextDate, { fallbackDate: new Date().toISOString().split("T")[0], fileDate: undefined }));
+      setParsedItems(parsed.items);
+      setIsParsed(true);
+    } catch (err: any) {
+      setError(err?.message || "Failed to read receipt image locally.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLocalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      void handleLocalImageParse(e.target.files[0]);
     }
   };
 
@@ -773,19 +820,37 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
                   </>
                 ) : (
                   <div className="space-y-4">
+                    <div
+                      onClick={() => localFileInputRef.current?.click()}
+                      className="border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all border-gray-300 bg-gray-50 hover:bg-gray-100/70"
+                    >
+                      <input
+                        ref={localFileInputRef}
+                        type="file"
+                        className="hidden"
+                        accept="image/*"
+                        onChange={handleLocalFileChange}
+                      />
+                      <div className="mx-auto mb-3 w-12 h-12 bg-white rounded-full shadow-sm flex items-center justify-center border text-gray-500">
+                        <Upload className="w-5 h-5 text-gray-400" />
+                      </div>
+                      <p className="text-sm font-semibold text-gray-900">Upload a receipt image</p>
+                      <p className="mt-1 text-xs text-gray-500">Local OCR uses Tesseract in-browser. No AI key required.</p>
+                    </div>
+
                     <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
-                      <Label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Paste receipt text</Label>
+                      <Label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Or paste receipt text</Label>
                       <textarea
                         value={receiptText}
                         onChange={(e) => setReceiptText(e.target.value)}
-                        rows={12}
+                        rows={10}
                         placeholder="Example:\nBROCCOLI 1.5 kg $4.99\nBANANAS 2.00 $1.50\nTOTAL $6.49"
                         className="mt-2 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 resize-none focus:outline-none focus:ring-2 focus:ring-blue-200"
                       />
                     </div>
 
                     <div className="flex justify-between items-center gap-2">
-                      <p className="text-xs text-gray-500">Uses the built-in local receipt parser. No AI key required.</p>
+                      <p className="text-xs text-gray-500">Best for clean, text-heavy or phone-captured receipts.</p>
                       <Button type="button" onClick={handleParseText} className="bg-blue-600 hover:bg-blue-700 text-white">
                         Parse Receipt Text
                       </Button>
