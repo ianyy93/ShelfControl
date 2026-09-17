@@ -39,7 +39,7 @@ export function getCategoryRestockTarget(category?: string | null) {
 }
 
 export function getEffectiveRestockTarget(item: Pick<GroceryItem, 'restockTarget' | 'category'>) {
-  if (item.restockTarget !== undefined && item.restockTarget !== null && item.restockTarget !== '') {
+  if (typeof item.restockTarget === 'number') {
     return Number(item.restockTarget) || 0;
   }
   return getCategoryRestockTarget(item.category);

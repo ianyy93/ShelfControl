@@ -4,7 +4,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { CATEGORIES, Category, GroceryItem, InventoryEntry, PriceEntry } from "../types";
-import { COMMON_UNITS, deriveUnitPrice, normalizeUnit, resolveReceiptDate } from "../lib/receipt";
+import { COMMON_UNITS, deriveUnitPrice, normalizeUnit, parseReceiptText, resolveReceiptDate } from "../lib/receipt";
 import { 
   Receipt, 
   Upload, 
@@ -144,6 +144,8 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
   const [parsedDate, setParsedDate] = useState("");
   const [parsedItems, setParsedItems] = useState<ParsedItem[]>([]);
   const [isParsed, setIsParsed] = useState(false);
+  const [scanMode, setScanMode] = useState<'ai' | 'local'>('ai');
+  const [receiptText, setReceiptText] = useState("");
   const [activeFocusItemId, setActiveFocusItemId] = useState<string | null>(null);
 
   // Helper to find exact or fuzzy match from existing items
@@ -472,6 +474,60 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
     setParsedItems(prev => [...prev, newItem]);
   };
 
+  const handleParseText = () => {
+    const rawText = receiptText.trim();
+    if (!rawText) {
+      setError("Paste some receipt text before parsing.");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setIsParsed(false);
+
+    try {
+      const parsed = parseReceiptText(rawText);
+      const items: ParsedItem[] = (parsed.items || []).map((item: any, idx: number) => {
+        const unit = normalizeUnit(item.unit || "pcs");
+        const priceQuantity = Number(item.priceQuantity ?? item.quantity ?? 1) || 1;
+        const priceUnit = normalizeUnit(item.priceUnit || item.unit || unit);
+
+        return {
+          id: `parsed-local-${idx}-${Date.now()}`,
+          name: item.name || "Unknown Item",
+          quantity: Number(item.quantity) || 1,
+          unit,
+          category: (CATEGORIES.includes(item.category) ? item.category : "Other") as Category,
+          price: typeof item.price === "number" ? Number(item.price) : undefined,
+          unitPrice: typeof item.unitPrice === "number" ? Number(item.unitPrice) : undefined,
+          priceQuantity,
+          priceUnit,
+          notes: item.notes || "",
+          entries: Array.isArray(item.entries) ? item.entries.map((entry: any) => ({
+            location: entry.location || "",
+            quantity: entry.quantity !== undefined ? Number(entry.quantity) : 1,
+            amount: entry.amount !== undefined ? Number(entry.amount) : undefined,
+            unit: normalizeUnit(entry.unit || unit),
+            expiryDate: entry.expiryDate || "",
+            dateBought: entry.dateBought || "",
+            label: entry.label || "",
+            tags: Array.isArray(entry.tags) ? entry.tags : [],
+          })) : [{ quantity: Number(item.quantity) || 1, unit, amount: undefined, location: "", dateBought: "", expiryDate: "", label: "", tags: [] }],
+        };
+      });
+
+      const nextDate = sanitizeReceiptDate(parsed.dateBought || new Date().toISOString().split("T")[0]);
+      setParsedStore(parsed.store || "");
+      setParsedDate(resolveReceiptDate(nextDate, { fallbackDate: new Date().toISOString().split("T")[0], fileDate: undefined }));
+      setParsedItems(items);
+      setIsParsed(true);
+    } catch (err: any) {
+      setError(err?.message || "Failed to parse receipt text.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleImportAll = async () => {
     try {
       setLoading(true);
@@ -535,7 +591,7 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-xl font-bold tracking-tight text-gray-900">
             <Sparkles className="w-5 h-5 text-blue-600 animate-pulse" />
-            Scan Receipt with Gemini AI
+            Scan Receipt
           </DialogTitle>
         </DialogHeader>
 
@@ -651,50 +707,91 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
                 exit={{ opacity: 0 }}
                 className="space-y-6"
               >
-                <div
-                  onDragEnter={handleDrag}
-                  onDragOver={handleDrag}
-                  onDragLeave={handleDrag}
-                  onDrop={handleDrop}
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-all flex flex-col items-center justify-center space-y-4 ${
-                    dragActive
-                      ? "border-blue-500 bg-blue-50/50 scale-[0.99]"
-                      : "border-gray-300 bg-gray-50 hover:bg-gray-100/70"
-                  }`}
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    className="hidden"
-                    accept="image/*"
-                    onChange={handleFileChange}
-                  />
-                  <div className="w-12 h-12 bg-white rounded-full shadow-sm flex items-center justify-center border text-gray-500">
-                    <Upload className="w-6 h-6 text-gray-400" />
-                  </div>
-                  <div className="space-y-1">
-                    <p className="font-semibold text-gray-900 text-sm">
-                      Upload or drop your receipt image
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      Supports PNG, JPEG, WEBP. Max size 15MB.
-                    </p>
-                  </div>
-                  <Button type="button" variant="outline" size="sm" className="bg-white">
-                    Select File
-                  </Button>
+                <div className="flex gap-2 rounded-xl border border-gray-200 bg-gray-100 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setScanMode('ai')}
+                    className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${scanMode === 'ai' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                  >
+                    AI scan
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setScanMode('local')}
+                    className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${scanMode === 'local' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                  >
+                    Local text
+                  </button>
                 </div>
 
-                <div className="bg-blue-50/50 border border-blue-100 p-4 rounded-xl flex items-start gap-3">
-                  <Sparkles className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
-                  <div className="text-xs text-blue-800 space-y-1">
-                    <p className="font-semibold">How Receipt Scanning works:</p>
-                    <p className="text-blue-700/80 leading-relaxed">
-                      Upload a photo of your shopping receipt. Gemini AI will automatically extract items, estimate quantities, guess categories, and track prices. Extracted items will be prepared as **unassigned location** inventory items.
-                    </p>
+                {scanMode === 'ai' ? (
+                  <>
+                    <div
+                      onDragEnter={handleDrag}
+                      onDragOver={handleDrag}
+                      onDragLeave={handleDrag}
+                      onDrop={handleDrop}
+                      onClick={() => fileInputRef.current?.click()}
+                      className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-all flex flex-col items-center justify-center space-y-4 ${
+                        dragActive
+                          ? "border-blue-500 bg-blue-50/50 scale-[0.99]"
+                          : "border-gray-300 bg-gray-50 hover:bg-gray-100/70"
+                      }`}
+                    >
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        className="hidden"
+                        accept="image/*"
+                        onChange={handleFileChange}
+                      />
+                      <div className="w-12 h-12 bg-white rounded-full shadow-sm flex items-center justify-center border text-gray-500">
+                        <Upload className="w-6 h-6 text-gray-400" />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="font-semibold text-gray-900 text-sm">
+                          Upload or drop your receipt image
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          Supports PNG, JPEG, WEBP. Max size 15MB.
+                        </p>
+                      </div>
+                      <Button type="button" variant="outline" size="sm" className="bg-white">
+                        Select File
+                      </Button>
+                    </div>
+
+                    <div className="bg-blue-50/50 border border-blue-100 p-4 rounded-xl flex items-start gap-3">
+                      <Sparkles className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+                      <div className="text-xs text-blue-800 space-y-1">
+                        <p className="font-semibold">AI receipt scan:</p>
+                        <p className="text-blue-700/80 leading-relaxed">
+                          Upload a photo and let Gemini extract items, quantities, categories, and prices automatically. Extracted items are prepared as unassigned-location inventory entries.
+                        </p>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+                      <Label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Paste receipt text</Label>
+                      <textarea
+                        value={receiptText}
+                        onChange={(e) => setReceiptText(e.target.value)}
+                        rows={12}
+                        placeholder="Example:\nBROCCOLI 1.5 kg $4.99\nBANANAS 2.00 $1.50\nTOTAL $6.49"
+                        className="mt-2 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 resize-none focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      />
+                    </div>
+
+                    <div className="flex justify-between items-center gap-2">
+                      <p className="text-xs text-gray-500">Uses the built-in local receipt parser. No AI key required.</p>
+                      <Button type="button" onClick={handleParseText} className="bg-blue-600 hover:bg-blue-700 text-white">
+                        Parse Receipt Text
+                      </Button>
+                    </div>
                   </div>
-                </div>
+                )}
               </motion.div>
             ) : (
               <motion.div

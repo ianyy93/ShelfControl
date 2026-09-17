@@ -145,3 +145,88 @@ export function deriveUnitPrice(input: {
     priceUnit,
   };
 }
+
+export function parseReceiptText(rawText: string): { store?: string; dateBought?: string; items: Array<{ name: string; quantity: number; unit: string; category: string; price: number; unitPrice?: number; priceQuantity?: number; priceUnit?: string; notes?: string; entries?: Array<{ quantity: number; unit: string }> }> } {
+  const text = String(rawText || "").replace(/\r/g, "").trim();
+  if (!text) {
+    return { items: [] };
+  }
+
+  const lines = text
+    .split(/\n+/)
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  const items: Array<{ name: string; quantity: number; unit: string; category: string; price: number; unitPrice?: number; priceQuantity?: number; priceUnit?: string; notes?: string; entries?: Array<{ quantity: number; unit: string }> }> = [];
+
+  const classifyItem = (name: string) => {
+    const lower = name.toLowerCase();
+    if (/milk|yogurt|cheese|butter|cream|egg|eggs/.test(lower)) return "Dairy & Eggs";
+    if (/beef|chicken|pork|fish|salmon|tuna|shrimp|seafood|steak/.test(lower)) return "Meat & Seafood";
+    if (/apple|banana|orange|grape|lettuce|spinach|broccoli|carrot|tomato|pepper|onion|cucumber|celery|avocado|berry|kiwi|melon|fruit|veg|vegetable/.test(lower)) return "Produce";
+    if (/beer|wine|juice|water|soda|tea|coffee|energy|milk|drink/.test(lower)) return "Beverages";
+    if (/chip|cracker|cookie|snack|candy|nuts|pretzel/.test(lower)) return "Snacks";
+    if (/soap|toilet|paper|detergent|cleaner|shampoo|trash|laundry|dish/.test(lower)) return "Household";
+    if (/dog|pet|cat|treat|food/.test(lower)) return "Dog Supplies";
+    if (/rice|pasta|sauce|beans|oil|flour|cereal|soup|canned|jar|bottle|tuna/.test(lower)) return "Pantry";
+    if (/frozen|ice cream|veggie|pizza|peas/.test(lower)) return "Frozen";
+    return "Other";
+  };
+
+  const parseMoney = (token: string | undefined): number | undefined => {
+    if (!token) return undefined;
+    const cleaned = token.replace(/[^0-9.\-]/g, "");
+    if (!cleaned || Number.isNaN(Number(cleaned))) return undefined;
+    return Number(cleaned);
+  };
+
+  for (const line of lines) {
+    const priceMatch = line.match(/\$?\s?(\d+(?:\.\d{1,2})?)\s*$/);
+    if (!priceMatch) continue;
+
+    const price = parseMoney(priceMatch[1]);
+    if (typeof price !== "number") continue;
+
+    const left = line.slice(0, line.lastIndexOf(priceMatch[0])).trim();
+    if (!left) continue;
+
+    const quantityMatch = left.match(/^(.*?)(?:\s+|)(\d+(?:\.\d+)?)\s*(kg|g|lb|oz|ml|l|pcs|pc|piece|pieces|ea|each)?(?:\s+|$)/i);
+
+    let quantity = 1;
+    let unit = "pcs";
+    let name = left;
+
+    if (quantityMatch) {
+      const maybeName = quantityMatch[1]?.trim();
+      const qty = Number(quantityMatch[2]);
+      const rawUnit = quantityMatch[3]?.trim();
+      if (maybeName) name = maybeName;
+      if (Number.isFinite(qty)) quantity = qty;
+      if (rawUnit) unit = normalizeUnit(rawUnit);
+    } else {
+      const nameNumberMatch = left.match(/^(.*?)(?:\s+|)(\d+(?:\.\d+)?)\s*$/);
+      if (nameNumberMatch && nameNumberMatch[1]) {
+        name = nameNumberMatch[1].trim();
+        quantity = Number(nameNumberMatch[2]) || 1;
+      }
+    }
+
+    const normalizedName = name.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "").trim();
+    if (!normalizedName) continue;
+
+    items.push({
+      name: normalizedName,
+      quantity,
+      unit,
+      category: classifyItem(normalizedName),
+      price,
+      unitPrice: undefined,
+      priceQuantity: quantity,
+      priceUnit: unit,
+      notes: "Parsed from receipt text fallback",
+      entries: [{ quantity, unit }],
+    });
+  }
+
+  return { items };
+}

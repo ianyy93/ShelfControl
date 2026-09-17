@@ -7,6 +7,7 @@ import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { Textarea } from "./ui/textarea";
 import { X, Plus, Minus, Trash2, Split } from "lucide-react";
 import { GroceryItem, CATEGORIES, Category, InventoryEntry, PriceEntry, RestockPolicy } from "../types";
+import { deriveUnitPrice } from "../lib/receipt";
 import { Badge } from "./ui/badge";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
@@ -192,7 +193,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
         setShoppingStore(item.shoppingStore || "");
         setInventoryEntries(item.inventoryEntries || []);
         setRestockPolicy(item.restockPolicy || 'manual');
-        setRestockTarget(item.restockTarget !== undefined && item.restockTarget !== null && item.restockTarget !== '' ? Number(item.restockTarget) : 0);
+        setRestockTarget(typeof item.restockTarget === 'number' ? Number(item.restockTarget) : 0);
         setServingsPerUnit(Number(item.servingsPerUnit) || 1);
         
         if (item.unprocessedQuantity && item.unprocessedQuantity > 0) {
