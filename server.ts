@@ -3,11 +3,13 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { parseReceiptText } from "./src/lib/receipt";
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
+const RECEIPT_MODEL = process.env.GEMINI_RECEIPT_MODEL || "gemini-2.5-flash";
 
 // Set up larger limits to support receipt base64 images
 app.use(express.json({ limit: "15mb" }));
@@ -69,6 +71,17 @@ app.post("/api/receipt/scan", async (req, res) => {
       console.error(`- Warning: Detected invalid Base64 characters: "${uniqChars}"`);
     }
 
+    const fallbackParsed = parseReceiptText(cleanImage ? Buffer.from(cleanImage, "base64").toString("utf-8") : "");
+    if (fallbackParsed.items.length > 0) {
+      console.log("[SERVER SCANDOC] Falling back to deterministic receipt parsing without AI.");
+      res.json({
+        store: "",
+        dateBought: new Date().toISOString().split("T")[0],
+        items: fallbackParsed.items,
+      });
+      return;
+    }
+
     const ai = getAiClient();
 
     const imagePart = {
@@ -79,21 +92,19 @@ app.post("/api/receipt/scan", async (req, res) => {
     };
 
     const currentDate = new Date().toISOString().split("T")[0];
-    const promptText = `Analyze this receipt or invoice and extract all purchased grocery and household items. 
-For each item, determine:
-- A clean, friendly item name (e.g., "Organic Apples", "Whole Milk").
-- The purchased quantity as it appears on the receipt.
-- The unit of measurement for that quantity (use 'pcs' for counted items, or a meaningful unit like 'kg', 'g', 'lb', 'oz', 'mL', 'L' when the receipt clearly shows a weight or volume basis).
-- The best category (must be exactly one of: Produce, Dairy & Eggs, Meat & Seafood, Pantry, Frozen, Beverages, Snacks, Household, Dog Supplies, Other).
-- The total price paid for that line item.
-- The unit price when the receipt clearly shows a price per unit, per kg, per pound, per liter, or similar; if not clear, leave this empty.
-- The price basis quantity and unit that the price applies to when the receipt shows a unit price or multi-pack price; if not specified, use the purchased quantity and same unit.
-- A short note with any useful context such as pack size, bundle, or multi-pack details.
-- An entries array that describes the inventory-style entries for this item. If one quantity is made of multiple packages or pieces, split it into multiple entry objects. Each entry should include location, quantity, amount, unit, expiryDate, dateBought, label, and tags.
-Also extract the merchant/store name and the receipt date in YYYY-MM-DD format if visible.`;
+    const promptText = `Extract grocery receipt data as JSON. Return only the fields needed for inventory import:
+- store: merchant name
+- dateBought: receipt date in YYYY-MM-DD or empty string
+- items: array of { name, quantity, unit, category, price, unitPrice?, priceQuantity?, priceUnit?, notes?, entries? }
+Rules:
+- category must be one of: Produce, Dairy & Eggs, Meat & Seafood, Pantry, Frozen, Beverages, Snacks, Household, Dog Supplies, Other
+- unit should be 'pcs' for counted items or a standard weight/volume unit when clear
+- if a price is per kg/L/each, fill unitPrice / priceQuantity / priceUnit
+- keep names clean and short
+- do not include explanations or markdown`;
 
     const callGemini = async () => ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: RECEIPT_MODEL,
       contents: [imagePart, { text: promptText }],
       config: {
         systemInstruction: "You are an expert receipt parsing assistant. Extract grocery items and store info into the exact JSON schema requested.",
@@ -179,15 +190,15 @@ Also extract the merchant/store name and the receipt date in YYYY-MM-DD format i
     });
 
     let response;
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         response = await callGemini();
         break;
       } catch (error: any) {
         const message = String(error?.message || "");
         const shouldRetry = /429|500|502|503|504|524|timeout|temporar/i.test(message) || error?.status === 429 || error?.status === 500 || error?.status === 502 || error?.status === 503 || error?.status === 504 || error?.status === 524;
-        if (shouldRetry && attempt < 3) {
-          await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+        if (shouldRetry && attempt < 2) {
+          await new Promise(resolve => setTimeout(resolve, 250 * attempt));
           continue;
         }
         throw error;
@@ -200,7 +211,6 @@ Also extract the merchant/store name and the receipt date in YYYY-MM-DD format i
     }
 
     textOutput = textOutput.trim();
-    // Strip markdown JSON wrappers if present
     if (textOutput.startsWith("```")) {
       textOutput = textOutput.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/, "").trim();
     }

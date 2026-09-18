@@ -255,8 +255,8 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
     if (typeof createImageBitmap !== "undefined") {
       try {
         const bitmap = await createImageBitmap(file);
-        const maxDimension = file.size > 2_000_000 ? 900 : 1200;
-        const quality = file.size > 3_000_000 ? 0.55 : file.size > 1_500_000 ? 0.62 : 0.7;
+        const maxDimension = file.size > 2_000_000 ? 800 : 1100;
+        const quality = file.size > 3_000_000 ? 0.48 : file.size > 1_500_000 ? 0.58 : 0.65;
 
         const canvas = document.createElement("canvas");
         const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
@@ -307,7 +307,7 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
     const retryableErrors = [429, 500, 502, 503, 504, 524];
     let lastError: any = null;
 
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         const response = await fetch("/api/receipt/scan", {
           method: "POST",
@@ -333,8 +333,8 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
             errDetails = textErr;
           }
 
-          if (retryableErrors.includes(response.status) && attempt < 3) {
-            await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+          if (retryableErrors.includes(response.status) && attempt < 2) {
+            await new Promise(resolve => setTimeout(resolve, 200 * attempt));
             continue;
           }
 
@@ -351,8 +351,8 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
           || /timeout|temporar|503|524|429|502|504/i.test(message)
           || error?.name === "TypeError";
 
-        if (shouldRetry && attempt < 3) {
-          await new Promise(resolve => setTimeout(resolve, 750 * attempt));
+        if (shouldRetry && attempt < 2) {
+          await new Promise(resolve => setTimeout(resolve, 300 * attempt));
           continue;
         }
 
@@ -514,6 +514,54 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
     };
   };
 
+  const preprocessReceiptImageForOCR = async (file: File) => {
+    const objectUrl = URL.createObjectURL(file);
+
+    try {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error("Unable to decode the uploaded receipt image."));
+        img.src = objectUrl;
+      });
+
+      const maxDimension = 1800;
+      const scale = Math.min(2.5, maxDimension / Math.max(image.width, image.height));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+
+      const context = canvas.getContext("2d");
+      if (!context) {
+        throw new Error("Your browser could not prepare the receipt image for OCR.");
+      }
+
+      context.fillStyle = "#fff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+      const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+      const pixels = imageData.data;
+
+      for (let i = 0; i < pixels.length; i += 4) {
+        const r = pixels[i];
+        const g = pixels[i + 1];
+        const b = pixels[i + 2];
+        const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+        const threshold = gray > 165 ? 255 : gray < 95 ? 0 : gray;
+        pixels[i] = threshold;
+        pixels[i + 1] = threshold;
+        pixels[i + 2] = threshold;
+      }
+
+      context.putImageData(imageData, 0, 0);
+      return canvas;
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  };
+
   const handleParseText = () => {
     const rawText = receiptText.trim();
     if (!rawText) {
@@ -550,7 +598,8 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
     setIsParsed(false);
 
     try {
-      const { data } = await Tesseract.recognize(file, "eng");
+      const processedImage = await preprocessReceiptImageForOCR(file);
+      const { data } = await Tesseract.recognize(processedImage, "eng");
       const text = data?.text || "";
       if (!text.trim()) {
         throw new Error("No text could be read from that receipt image.");

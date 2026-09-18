@@ -7,6 +7,8 @@ interface Env {
   };
 }
 
+const RECEIPT_MODEL = (typeof process !== "undefined" && process.env?.GEMINI_RECEIPT_MODEL) || "gemini-2.5-flash";
+
 let aiClient: GoogleGenAI | null = null;
 
 function getAiClient(env: Env): GoogleGenAI {
@@ -90,22 +92,20 @@ export default {
         }
 
         const cleanImage = String(image).includes(",") ? String(image).split(",")[1] : String(image);
-        const promptText = `Analyze this receipt or invoice and extract all purchased grocery and household items. 
-For each item, determine:
-- A clean, friendly item name (e.g., "Organic Apples", "Whole Milk").
-- The purchased quantity as it appears on the receipt.
-- The unit of measurement for that quantity (use 'pcs' for counted items, or a meaningful unit like 'kg', 'g', 'lb', 'oz', 'mL', 'L' when the receipt clearly shows a weight or volume basis).
-- The best category (must be exactly one of: Produce, Dairy & Eggs, Meat & Seafood, Pantry, Frozen, Beverages, Snacks, Household, Dog Supplies, Other).
-- The total price paid for that line item.
-- The unit price when the receipt clearly shows a price per unit, per kg, per pound, per liter, or similar; if not clear, leave this empty.
-- The price basis quantity and unit that the price applies to when the receipt shows a unit price or multi-pack price; if not specified, use the purchased quantity and same unit.
-- A short note with any useful context such as pack size, bundle, or multi-pack details.
-- An entries array that describes the inventory-style entries for this item. If one quantity is made of multiple packages or pieces, split it into multiple entry objects. Each entry should include location, quantity, amount, unit, expiryDate, dateBought, label, and tags.
-Also extract the merchant/store name and the receipt date in YYYY-MM-DD format if visible.`;
+        const promptText = `Extract grocery receipt data as JSON. Return only the fields needed for inventory import:
+- store: merchant name
+- dateBought: receipt date in YYYY-MM-DD or empty string
+- items: array of { name, quantity, unit, category, price, unitPrice?, priceQuantity?, priceUnit?, notes?, entries? }
+Rules:
+- category must be one of: Produce, Dairy & Eggs, Meat & Seafood, Pantry, Frozen, Beverages, Snacks, Household, Dog Supplies, Other
+- unit should be 'pcs' for counted items or a standard weight/volume unit when clear
+- if a price is per kg/L/each, fill unitPrice / priceQuantity / priceUnit
+- keep names clean and short
+- do not include explanations or markdown`;
 
         const client = getAiClient(env);
         const callGemini = async () => client.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: RECEIPT_MODEL,
           contents: [{ inlineData: { mimeType, data: cleanImage } }, { text: promptText }],
           config: {
             systemInstruction: "You are an expert receipt parsing assistant. Extract grocery items and store info into the exact JSON schema requested.",
@@ -156,15 +156,15 @@ Also extract the merchant/store name and the receipt date in YYYY-MM-DD format i
         });
 
         let response;
-        for (let attempt = 1; attempt <= 3; attempt++) {
+        for (let attempt = 1; attempt <= 2; attempt++) {
           try {
             response = await callGemini();
             break;
           } catch (error: any) {
             const message = String(error?.message || "");
             const shouldRetry = /429|500|502|503|504|524|timeout|temporar/i.test(message) || error?.status === 429 || error?.status === 500 || error?.status === 502 || error?.status === 503 || error?.status === 504 || error?.status === 524;
-            if (shouldRetry && attempt < 3) {
-              await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+            if (shouldRetry && attempt < 2) {
+              await new Promise(resolve => setTimeout(resolve, 250 * attempt));
               continue;
             }
             throw error;
