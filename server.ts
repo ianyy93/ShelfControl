@@ -9,7 +9,7 @@ dotenv.config();
 
 const app = express();
 const PORT = 3000;
-const RECEIPT_MODEL = process.env.GEMINI_RECEIPT_MODEL || "gemini-2.5-flash";
+const RECEIPT_MODEL = process.env.GEMINI_RECEIPT_MODEL || "gemini-3.5-flash";
 
 // Set up larger limits to support receipt base64 images
 app.use(express.json({ limit: "15mb" }));

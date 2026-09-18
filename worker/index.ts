@@ -7,7 +7,7 @@ interface Env {
   };
 }
 
-const RECEIPT_MODEL = (typeof process !== "undefined" && process.env?.GEMINI_RECEIPT_MODEL) || "gemini-2.5-flash";
+const RECEIPT_MODEL = (typeof process !== "undefined" && process.env?.GEMINI_RECEIPT_MODEL) || "gemini-3.5-flash";
 
 let aiClient: GoogleGenAI | null = null;
 
