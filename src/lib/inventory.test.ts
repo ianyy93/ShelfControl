@@ -6,6 +6,8 @@ import {
   getTotalContent,
   coerceEntriesToUnit,
   consumeFromEntries,
+  applyEntryDelta,
+  consumePackages,
 } from './inventory.ts';
 import type { InventoryEntry } from '../types.ts';
 
@@ -157,5 +159,102 @@ describe('consumeFromEntries', () => {
     consumeFromEntries(entries, 1);
     expect(entries[0].quantity).toBe(2);
     expect(entries).toHaveLength(1);
+  });
+});
+
+describe('applyEntryDelta', () => {
+  it('adjusts package count for unopened entries', () => {
+    const e = entry({ quantity: 2, isOpened: false });
+    expect(applyEntryDelta(e, -1).quantity).toBe(1);
+    expect(applyEntryDelta(e, 1).quantity).toBe(3);
+    expect(applyEntryDelta(e, -5).quantity).toBe(0);
+  });
+
+  it('adjusts package count for opened entries without a tracked amount', () => {
+    const e = entry({ quantity: 2, isOpened: true });
+    expect(applyEntryDelta(e, -1).quantity).toBe(1);
+  });
+
+  it('reduces the amount first for opened entries with a tracked amount', () => {
+    const e = entry({ quantity: 1, amount: 500, unit: 'g', isOpened: true });
+    const out = applyEntryDelta(e, -200);
+    expect(out.amount).toBe(300);
+    expect(out.quantity).toBe(1);
+  });
+
+  it('drops the package when the amount hits zero', () => {
+    const e = entry({ quantity: 1, amount: 200, unit: 'g', isOpened: true });
+    const out = applyEntryDelta(e, -200);
+    expect(out.quantity).toBe(0);
+    expect(out.amount).toBeUndefined();
+  });
+
+  it('drops the package when consuming more than the remaining amount', () => {
+    const e = entry({ quantity: 1, amount: 200, unit: 'g', isOpened: true });
+    const out = applyEntryDelta(e, -500);
+    expect(out.quantity).toBe(0);
+    expect(out.amount).toBeUndefined();
+  });
+
+  it('increases the amount on positive delta for opened tracked entries', () => {
+    const e = entry({ quantity: 1, amount: 200, unit: 'g', isOpened: true });
+    expect(applyEntryDelta(e, 50).amount).toBe(250);
+  });
+
+  it('does not mutate the input entry', () => {
+    const e = entry({ quantity: 1, amount: 500, unit: 'g', isOpened: true });
+    applyEntryDelta(e, -200);
+    expect(e.amount).toBe(500);
+    expect(e.quantity).toBe(1);
+  });
+});
+
+describe('consumePackages', () => {
+  it('finishes opened entries with tracked amounts before unopened counts', () => {
+    const entries = [
+      entry({ id: 'unopened', quantity: 2, isOpened: false }),
+      entry({ id: 'opened', quantity: 1, amount: 200, unit: 'g', isOpened: true }),
+    ];
+    const { entries: out, remaining } = consumePackages(entries, 1);
+    expect(remaining).toBe(0);
+    expect(out.find((e) => e.id === 'opened')!.quantity).toBe(0);
+    expect(out.find((e) => e.id === 'unopened')!.quantity).toBe(2);
+  });
+
+  it('falls back to package counts when no opened tracked entries remain', () => {
+    const entries = [
+      entry({ id: 'a', quantity: 2, isOpened: false }),
+      entry({ id: 'b', quantity: 3, isOpened: false }),
+    ];
+    const { entries: out, remaining } = consumePackages(entries, 4);
+    expect(remaining).toBe(0);
+    expect(out.map((e) => [e.id, e.quantity])).toEqual([
+      ['a', 0],
+      ['b', 1],
+    ]);
+  });
+
+  it('respects the scope predicate (location scoping)', () => {
+    const entries = [
+      entry({ id: 'fridge', quantity: 2, location: 'fridge' }),
+      entry({ id: 'pantry', quantity: 2, location: 'pantry' }),
+    ];
+    const { entries: out, remaining } = consumePackages(entries, 1, (e) => e.location === 'fridge');
+    expect(remaining).toBe(0);
+    expect(out.find((e) => e.id === 'fridge')!.quantity).toBe(1);
+    expect(out.find((e) => e.id === 'pantry')!.quantity).toBe(2);
+  });
+
+  it('reports the unconsumed remainder', () => {
+    const entries = [entry({ quantity: 1 })];
+    const { remaining } = consumePackages(entries, 5);
+    expect(remaining).toBe(4);
+  });
+
+  it('does not mutate the input entries', () => {
+    const entries = [entry({ quantity: 2, amount: 500, unit: 'g', isOpened: true })];
+    consumePackages(entries, 1);
+    expect(entries[0].quantity).toBe(2);
+    expect(entries[0].amount).toBe(500);
   });
 });
