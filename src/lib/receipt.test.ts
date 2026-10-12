@@ -1,113 +1,127 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { buildReceiptPriceEntry, deriveUnitPrice, normalizeUnit, parseReceiptText, resolveReceiptDate } from './receipt.ts';
+import { describe, it, expect } from 'vitest';
+import { buildReceiptPriceEntry, deriveUnitPrice, parseReceiptText, resolveReceiptDate } from './receipt.ts';
+import { normalizeUnit } from './units.ts';
 import { filterValidInventoryEntries } from './inventory.ts';
 import { getAvailableUnopenedStock, getEffectiveRestockTarget, isItemBelowRestockTarget } from './restock.ts';
 
-test('normalizes common unit aliases', () => {
-  assert.equal(normalizeUnit('kilograms'), 'kg');
-  assert.equal(normalizeUnit('pieces'), 'pcs');
-  assert.equal(normalizeUnit('mL'), 'ml');
+describe('normalizeUnit', () => {
+  it('normalizes common unit aliases', () => {
+    expect(normalizeUnit('kilograms')).toBe('kg');
+    expect(normalizeUnit('pieces')).toBe('pcs');
+    expect(normalizeUnit('mL')).toBe('ml');
+  });
 });
 
-test('derives per-unit prices from receipt totals', () => {
-  const result = deriveUnitPrice({
-    totalPrice: 5,
-    priceQuantity: 2.5,
-    priceUnit: 'kg',
-    quantity: 2.5,
-    quantityUnit: 'kg',
+describe('deriveUnitPrice', () => {
+  it('derives per-unit prices from receipt totals', () => {
+    const result = deriveUnitPrice({
+      totalPrice: 5,
+      priceQuantity: 2.5,
+      priceUnit: 'kg',
+      quantity: 2.5,
+      quantityUnit: 'kg',
+    });
+
+    expect(result.unitPrice).toBe(2);
+    expect(result.priceUnit).toBe('kg');
   });
 
-  assert.equal(result.unitPrice, 2);
-  assert.equal(result.priceUnit, 'kg');
+  it('prefers an explicit unit price when provided', () => {
+    const result = deriveUnitPrice({
+      totalPrice: 5,
+      unitPrice: 3.49,
+      priceQuantity: 2.5,
+      priceUnit: 'kg',
+      quantity: 2.5,
+      quantityUnit: 'kg',
+    });
+
+    expect(result.unitPrice).toBe(3.49);
+    expect(result.totalPrice).toBe(5);
+  });
 });
 
-test('prefers an explicit unit price when provided', () => {
-  const result = deriveUnitPrice({
-    totalPrice: 5,
-    unitPrice: 3.49,
-    priceQuantity: 2.5,
-    priceUnit: 'kg',
-    quantity: 2.5,
-    quantityUnit: 'kg',
+describe('resolveReceiptDate', () => {
+  it('prefers the uploaded image date when OCR returns an older year', () => {
+    const resolved = resolveReceiptDate('2024-08-06', {
+      fallbackDate: '2026-08-06',
+      fileDate: '2026-08-06',
+    });
+
+    expect(resolved).toBe('2026-08-06');
+  });
+});
+
+describe('buildReceiptPriceEntry', () => {
+  it('uses the receipt price basis quantity for price history entries', () => {
+    const entry = buildReceiptPriceEntry({
+      store: 'Fresh Market',
+      date: '2026-08-06',
+      totalPrice: 12.5,
+      unitPrice: 2.5,
+      priceQuantity: 5,
+      priceUnit: 'kg',
+      quantity: 5,
+      quantityUnit: 'kg',
+    });
+
+    expect(entry.quantity).toBe(5);
+    expect(entry.unitStr).toBe('kg');
+    expect(entry.price).toBe(2.5);
+  });
+});
+
+describe('parseReceiptText', () => {
+  it('parses a simple receipt text row into a deterministic item', () => {
+    const parsed = parseReceiptText(
+      `BROCCOLI 1.5 kg $4.99\nBANANAS 2.00 $1.50\nTOTAL $6.49`
+    );
+
+    expect(parsed.items.length >= 2).toBe(true);
+    expect(parsed.items[0].name.toLowerCase().includes('broccoli')).toBe(true);
+    expect(parsed.items[0].quantity).toBe(1.5);
+    expect(parsed.items[0].unit).toBe('kg');
+    expect(parsed.items[0].price).toBe(4.99);
   });
 
-  assert.equal(result.unitPrice, 3.49);
-  assert.equal(result.totalPrice, 5);
-});
+  it('falls back to pcs when the receipt contains counted items without a unit', () => {
+    const parsed = parseReceiptText(`APPLES 3 $2.49\nORANGES 4 $3.25`);
 
-test('prefers the uploaded image date when OCR returns an older year', () => {
-  const resolved = resolveReceiptDate('2024-08-06', {
-    fallbackDate: '2026-08-06',
-    fileDate: '2026-08-06',
+    expect(parsed.items[0].unit).toBe('pcs');
+    expect(parsed.items[0].quantity).toBe(3);
+    expect(parsed.items[0].price).toBe(2.49);
   });
-
-  assert.equal(resolved, '2026-08-06');
 });
 
-test('uses the receipt price basis quantity for price history entries', () => {
-  const entry = buildReceiptPriceEntry({
-    store: 'Fresh Market',
-    date: '2026-08-06',
-    totalPrice: 12.5,
-    unitPrice: 2.5,
-    priceQuantity: 5,
-    priceUnit: 'kg',
-    quantity: 5,
-    quantityUnit: 'kg',
+describe('restock', () => {
+  it('category defaults apply when item target is missing and zero-stock alerts are triggered at 0', () => {
+    const item = {
+      name: 'Carrots',
+      category: 'vegetables',
+      inventoryQuantity: 0,
+      shoppingQuantity: 0,
+      notes: '',
+      listId: 'list-1',
+      creatorId: 'u1',
+      restockPolicy: 'essential' as const,
+      inventoryEntries: [{ id: 'e1', location: '', quantity: 0, isOpened: false }],
+    };
+
+    expect(getEffectiveRestockTarget(item as any)).toBe(3);
+    expect(getAvailableUnopenedStock(item as any)).toBe(0);
+    expect(isItemBelowRestockTarget(item as any)).toBe(true);
   });
-
-  assert.equal(entry.quantity, 5);
-  assert.equal(entry.unitStr, 'kg');
-  assert.equal(entry.price, 2.5);
 });
 
-test('parses a simple receipt text row into a deterministic item', () => {
-  const parsed = parseReceiptText(
-    `BROCCOLI 1.5 kg $4.99\nBANANAS 2.00 $1.50\nTOTAL $6.49`
-  );
+describe('filterValidInventoryEntries', () => {
+  it('keeps unopened pcs entries when an opened entry is reduced to zero', () => {
+    const entries = [
+      { id: 'opened-1', location: '', quantity: 0, unit: 'pcs', isOpened: true, amount: undefined },
+      { id: 'unopened-1', location: '', quantity: 2, unit: 'pcs', isOpened: false },
+      { id: 'unopened-2', location: '', quantity: 1, unit: 'pcs', isOpened: false },
+    ] as any;
 
-  assert.equal(parsed.items.length >= 2, true);
-  assert.equal(parsed.items[0].name.toLowerCase().includes('broccoli'), true);
-  assert.equal(parsed.items[0].quantity, 1.5);
-  assert.equal(parsed.items[0].unit, 'kg');
-  assert.equal(parsed.items[0].price, 4.99);
-});
-
-test('falls back to pcs when the receipt contains counted items without a unit', () => {
-  const parsed = parseReceiptText(`APPLES 3 $2.49\nORANGES 4 $3.25`);
-
-  assert.equal(parsed.items[0].unit, 'pcs');
-  assert.equal(parsed.items[0].quantity, 3);
-  assert.equal(parsed.items[0].price, 2.49);
-});
-
-test('category defaults apply when item target is missing and zero-stock alerts are triggered at 0', () => {
-  const item = {
-    name: 'Carrots',
-    category: 'vegetables',
-    inventoryQuantity: 0,
-    shoppingQuantity: 0,
-    notes: '',
-    listId: 'list-1',
-    creatorId: 'u1',
-    restockPolicy: 'essential' as const,
-    inventoryEntries: [{ id: 'e1', location: '', quantity: 0, isOpened: false }],
-  };
-
-  assert.equal(getEffectiveRestockTarget(item as any), 3);
-  assert.equal(getAvailableUnopenedStock(item as any), 0);
-  assert.equal(isItemBelowRestockTarget(item as any), true);
-});
-
-test('keeps unopened pcs entries when an opened entry is reduced to zero', () => {
-  const entries = [
-    { id: 'opened-1', location: '', quantity: 0, unit: 'pcs', isOpened: true, amount: undefined },
-    { id: 'unopened-1', location: '', quantity: 2, unit: 'pcs', isOpened: false },
-    { id: 'unopened-2', location: '', quantity: 1, unit: 'pcs', isOpened: false },
-  ] as any;
-
-  const remaining = filterValidInventoryEntries(entries).map(e => e.id);
-  assert.deepEqual(remaining, ['unopened-1', 'unopened-2']);
+    const remaining = filterValidInventoryEntries(entries).map(e => e.id);
+    expect(remaining).toEqual(['unopened-1', 'unopened-2']);
+  });
 });
