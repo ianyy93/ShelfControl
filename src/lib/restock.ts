@@ -1,4 +1,5 @@
 import type { GroceryItem } from '../types';
+import { sumEntryQuantities } from './inventory';
 
 export type RestockPolicy = 'essential' | 'optional' | 'manual';
 
@@ -21,8 +22,12 @@ export const CATEGORY_RESTOCK_TARGETS: Record<string, number> = {
 };
 
 export function getAvailableUnopenedStock(item: Pick<GroceryItem, 'inventoryEntries' | 'inventoryQuantity'>) {
-  const unopened = (item.inventoryEntries || []).filter(entry => !entry.isOpened).reduce((sum, entry) => sum + (Number(entry.quantity) || 0), 0);
-  return unopened > 0 ? unopened : (Number(item.inventoryQuantity) || 0);
+  // Sum package counts over unopened entries. Falls back to the stored
+  // inventoryQuantity only for legacy docs with no entries array at all.
+  if (Array.isArray(item.inventoryEntries)) {
+    return sumEntryQuantities(item.inventoryEntries.filter(entry => !entry.isOpened));
+  }
+  return Number(item.inventoryQuantity) || 0;
 }
 
 export function getItemServings(item: Pick<GroceryItem, 'inventoryQuantity' | 'servingsPerUnit'>) {

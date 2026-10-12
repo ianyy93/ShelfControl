@@ -16,7 +16,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { ReceiptScanDialog } from "./components/ReceiptScanDialog";
 import { Sparkles, Receipt, GitMerge } from "lucide-react";
 import { buildReceiptPriceEntry, deriveUnitPrice } from "./lib/receipt";
-import { filterValidInventoryEntries } from "./lib/inventory";
+import { filterValidInventoryEntries, sumEntryQuantities, coerceEntriesToUnit } from "./lib/inventory";
+import { normalizeUnit } from "./lib/units";
 import { getAvailableUnopenedStock, getEffectiveRestockTarget } from "./lib/restock";
 import { Badge } from "./components/ui/badge";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "./components/ui/accordion";
@@ -365,7 +366,8 @@ export default function App() {
         );
 
         if (existingMatch && existingMatch.id) {
-          const combinedEntries = [...(existingMatch.inventoryEntries || []), ...(updatedFields.inventoryEntries || editingItem.inventoryEntries || [])];
+          const canonicalUnit = normalizeUnit(updatedFields.unit || existingMatch.unit || editingItem.unit);
+          const combinedEntries = coerceEntriesToUnit([...(existingMatch.inventoryEntries || []), ...(updatedFields.inventoryEntries || editingItem.inventoryEntries || [])], canonicalUnit);
           const combinedLocs = Array.from(new Set(combinedEntries.map(e => e.location).filter(Boolean)));
           
           const combinedPriceHistory = [...(existingMatch.priceHistory || []), ...(editingItem.priceHistory || [])];
@@ -393,11 +395,11 @@ export default function App() {
           const mergeUpdate: Partial<GroceryItem> = {
             category: updatedFields.category || existingMatch.category,
             shoppingQuantity: (existingMatch.shoppingQuantity || 0) + (updatedFields.shoppingQuantity !== undefined ? Number(updatedFields.shoppingQuantity) : (editingItem.shoppingQuantity || 0)),
-            inventoryQuantity: combinedEntries.reduce((sum, e) => sum + (Number(e.quantity) || 0), 0),
+            inventoryQuantity: sumEntryQuantities(combinedEntries),
             inventoryEntries: combinedEntries,
             locations: combinedLocs,
             notes: [existingMatch.notes, updatedFields.notes || editingItem.notes].filter(Boolean).join("\n"),
-            unit: updatedFields.unit || existingMatch.unit || editingItem.unit,
+            unit: canonicalUnit,
             priceHistory: combinedPriceHistory,
             unprocessedQuantity: combinedUnprocessed > 0 ? combinedUnprocessed : undefined,
             isHiddenSuggestion: false,
@@ -429,17 +431,18 @@ export default function App() {
       } else {
         const existingMatch = items.find(i => i.name.toLowerCase().trim() === updatedFields.name?.toLowerCase().trim());
         if (existingMatch && existingMatch.id) {
-           const newEntries = [...(existingMatch.inventoryEntries || []), ...(updatedFields.inventoryEntries || [])];
+           const canonicalUnit = normalizeUnit(updatedFields.unit || existingMatch.unit);
+           const newEntries = coerceEntriesToUnit([...(existingMatch.inventoryEntries || []), ...(updatedFields.inventoryEntries || [])], canonicalUnit);
            const newLocs = Array.from(new Set(newEntries.map(e => e.location).filter(Boolean)));
            
            const updateData: Partial<GroceryItem> = {
                category: updatedFields.category,
                shoppingQuantity: (existingMatch.shoppingQuantity || 0) + (updatedFields.shoppingQuantity || 0),
-               inventoryQuantity: (existingMatch.inventoryQuantity || 0) + (updatedFields.inventoryQuantity || 0),
+               inventoryQuantity: newEntries.length > 0 ? sumEntryQuantities(newEntries) : (Number(existingMatch.inventoryQuantity) || 0) + (Number(updatedFields.inventoryQuantity) || 0),
                inventoryEntries: newEntries,
                locations: newLocs,
                notes: [existingMatch.notes, updatedFields.notes].filter(Boolean).join("\n"),
-               unit: updatedFields.unit || existingMatch.unit,
+               unit: canonicalUnit,
                isHiddenSuggestion: false,
                updatedAt: serverTimestamp()
            };
@@ -519,8 +522,9 @@ export default function App() {
     if (!confirmed) return;
 
     try {
-      const mergedEntries = [...(targetItem.inventoryEntries || []), ...(sourceItem.inventoryEntries || [])];
-      const mergedInventoryQuantity = mergedEntries.reduce((sum, entry) => sum + (Number(entry.quantity) || 0), 0);
+      const canonicalUnit = normalizeUnit(targetItem.unit || sourceItem.unit);
+      const mergedEntries = coerceEntriesToUnit([...(targetItem.inventoryEntries || []), ...(sourceItem.inventoryEntries || [])], canonicalUnit);
+      const mergedInventoryQuantity = sumEntryQuantities(mergedEntries);
       const mergedShoppingQuantity = (targetItem.shoppingQuantity || 0) + (sourceItem.shoppingQuantity || 0);
       const mergedLocations = Array.from(new Set(mergedEntries.map(entry => entry.location).filter(Boolean) as string[]));
       const mergedNotes = [targetItem.notes, sourceItem.notes].filter(Boolean).join("\n");
@@ -536,7 +540,7 @@ export default function App() {
         notes: mergedNotes,
         priceHistory: mergedPriceHistory,
         unprocessedQuantity: mergedUnprocessed > 0 ? mergedUnprocessed : undefined,
-        unit: targetItem.unit || sourceItem.unit,
+        unit: canonicalUnit,
         isHiddenSuggestion: false,
         updatedAt: serverTimestamp()
       }));
@@ -572,8 +576,9 @@ export default function App() {
     if (!confirmed) return;
 
     try {
-      const mergedEntries = selectedItems.flatMap(item => item.inventoryEntries || []);
-      const mergedInventoryQuantity = mergedEntries.reduce((sum, entry) => sum + (Number(entry.quantity) || 0), 0);
+      const canonicalUnit = normalizeUnit(target.unit || selectedItems.find(item => item.unit)?.unit);
+      const mergedEntries = coerceEntriesToUnit(selectedItems.flatMap(item => item.inventoryEntries || []), canonicalUnit);
+      const mergedInventoryQuantity = sumEntryQuantities(mergedEntries);
       const mergedShoppingQuantity = selectedItems.reduce((sum, item) => sum + (Number(item.shoppingQuantity) || 0), 0);
       const mergedLocations = Array.from(new Set(mergedEntries.map(entry => entry.location).filter(Boolean) as string[]));
       const mergedNotes = selectedItems.map(item => item.notes?.trim()).filter(Boolean).join("\n");
@@ -589,7 +594,7 @@ export default function App() {
         notes: mergedNotes,
         priceHistory: mergedPriceHistory,
         unprocessedQuantity: mergedUnprocessed > 0 ? mergedUnprocessed : undefined,
-        unit: target.unit || selectedItems.find(item => item.unit)?.unit,
+        unit: canonicalUnit,
         isHiddenSuggestion: false,
         updatedAt: serverTimestamp()
       }));
@@ -618,8 +623,9 @@ export default function App() {
     const sourceItems = duplicateList.slice(1);
     
     try {
-      const mergedEntries = duplicateList.flatMap(i => i.inventoryEntries || []);
-      const mergedInventoryQuantity = mergedEntries.reduce((sum, e) => sum + (Number(e.quantity) || 0), 0);
+      const canonicalUnit = normalizeUnit(target.unit);
+      const mergedEntries = coerceEntriesToUnit(duplicateList.flatMap(i => i.inventoryEntries || []), canonicalUnit);
+      const mergedInventoryQuantity = sumEntryQuantities(mergedEntries);
       const mergedShoppingQuantity = duplicateList.reduce((sum, i) => sum + (Number(i.shoppingQuantity) || 0), 0);
       const mergedLocs = Array.from(new Set(mergedEntries.map(e => e.location).filter(Boolean)));
       const mergedNotes = duplicateList.map(i => i.notes?.trim()).filter(Boolean).join("\n");
@@ -634,6 +640,7 @@ export default function App() {
         notes: mergedNotes,
         priceHistory: mergedPriceHistory,
         unprocessedQuantity: mergedUnprocessed > 0 ? mergedUnprocessed : undefined,
+        unit: canonicalUnit,
         updatedAt: serverTimestamp()
       };
       
@@ -693,7 +700,7 @@ export default function App() {
           location: entry.location || "",
           quantity: Number(entry.quantity ?? scanned.quantity) || 1,
           amount: entry.amount !== undefined ? Number(entry.amount) : undefined,
-          unit: entry.unit || scanned.unit || "",
+          unit: normalizeUnit(entry.unit || scanned.unit || existingMatch?.unit),
           expiryDate: entry.expiryDate || "",
           dateBought: entry.dateBought || purchaseDate,
           dateAdded: todayStr,
@@ -701,13 +708,14 @@ export default function App() {
           tags: entry.tags || [],
         }));
 
-      const compiledQty = baseEntries.reduce((sum, entry) => sum + (Number(entry.quantity) || 0), 0) || Number(scanned.quantity) || 1;
+      const compiledQty = sumEntryQuantities(baseEntries) || Number(scanned.quantity) || 1;
       const updatedLocations = Array.from(new Set(baseEntries.map(e => e.location).filter(Boolean)));
 
       if (existingMatch && existingMatch.id) {
-        const updatedEntries = [...(existingMatch.inventoryEntries || []), ...baseEntries];
+        const canonicalUnit = normalizeUnit(existingMatch.unit);
+        const updatedEntries = coerceEntriesToUnit([...(existingMatch.inventoryEntries || []), ...baseEntries], canonicalUnit);
         const updateData: any = {
-          inventoryQuantity: (existingMatch.inventoryQuantity || 0) + compiledQty,
+          inventoryQuantity: sumEntryQuantities(updatedEntries),
           inventoryEntries: updatedEntries,
           locations: updatedLocations,
           updatedAt: serverTimestamp(),
@@ -741,7 +749,7 @@ export default function App() {
           inventoryEntries: baseEntries,
           locations: updatedLocations,
           location: updatedLocations[0] || "",
-          unit: scanned.unit || "",
+          unit: normalizeUnit(scanned.unit),
           servingSize: 1,
           servingsPerUnit: 1,
           restockPolicy: 'manual',
@@ -794,7 +802,7 @@ export default function App() {
   const updateQuantities = async (item: GroceryItem, invDelta: number, shopDelta: number, locationTrigger?: string) => {
     if (!user || !activeListId || !item.id) return;
     const itemBefore = JSON.parse(JSON.stringify(item));
-    const newInv = Math.max(0, item.inventoryQuantity + invDelta);
+    const hadEntries = (item.inventoryEntries || []).length > 0;
     const newShop = Math.max(0, item.shoppingQuantity + shopDelta);
     
     let newEntries = [...(item.inventoryEntries || [])];
@@ -814,6 +822,7 @@ export default function App() {
           id: crypto.randomUUID(),
           location: defaultLoc,
           quantity: invDelta,
+          unit: normalizeUnit(item.unit),
           dateBought: today,
           dateAdded: today
         });
@@ -853,6 +862,11 @@ export default function App() {
     }
     
     const newLocs = Array.from(new Set(newEntries.map(e => e.location).filter(Boolean)));
+    // inventoryQuantity is derived from entries — recompute, never hand-add.
+    // Legacy fallback (no entries at all): keep the old additive behavior.
+    const newInv = hadEntries || newEntries.length > 0
+      ? sumEntryQuantities(newEntries)
+      : Math.max(0, (Number(item.inventoryQuantity) || 0) + invDelta);
     const nextHistory = [...(item.activityHistory || [])];
     if (invDelta > 0) {
       nextHistory.push({ id: crypto.randomUUID(), type: 'added', quantity: Math.abs(invDelta), unit: item.unit || 'pcs', date: activityStamp, note: 'Inventory added' });
@@ -1080,7 +1094,7 @@ export default function App() {
     // have a per-package amount set. Missing `amount` is not equivalent to zero stock.
     newEntries = filterValidInventoryEntries(newEntries);
     
-    const newInv = newEntries.reduce((sum, e) => sum + e.quantity, 0);
+    const newInv = sumEntryQuantities(newEntries);
     const newLocs = Array.from(new Set(newEntries.map(e => e.location).filter(Boolean)));
 
     try {

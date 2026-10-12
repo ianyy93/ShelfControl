@@ -8,6 +8,8 @@ import { Textarea } from "./ui/textarea";
 import { X, Plus, Minus, Trash2, Split } from "lucide-react";
 import { GroceryItem, CATEGORIES, Category, InventoryEntry, PriceEntry, RestockPolicy } from "../types";
 import { deriveUnitPrice } from "../lib/receipt";
+import { normalizeUnit } from "../lib/units";
+import { sumEntryQuantities } from "../lib/inventory";
 import { Badge } from "./ui/badge";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
@@ -275,11 +277,13 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
   }, [isOpen, item, defaultMode, focusedEntryId, focusedPriceId]);
 
   const handleUnitChange = (val: string) => {
-    setUnit(val);
+    const canonical = normalizeUnit(val);
+    setUnit(canonical);
     // Automatically apply the new unit to entries that don't have a unit, or update them if they match the old unit
+    const oldCanonical = normalizeUnit(unit);
     setInventoryEntries(entries => entries.map(e => ({
       ...e,
-      unit: (!e.unit || e.unit === unit) ? val : e.unit
+      unit: (!e.unit || normalizeUnit(e.unit) === oldCanonical) ? canonical : normalizeUnit(e.unit)
     })));
   };
 
@@ -287,11 +291,10 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
     e.preventDefault();
     setLoading(true);
     
-    let derivedInventoryQuant = 0;
+    const derivedInventoryQuant = sumEntryQuantities(inventoryEntries);
     const derivedLocations = new Set<string>();
     
     inventoryEntries.forEach(entry => {
-        derivedInventoryQuant += Number(entry.quantity) || 0;
         if (entry.location && entry.location.trim()) {
             derivedLocations.add(entry.location.trim());
         }
@@ -302,10 +305,10 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
     const updateData: Partial<GroceryItem> & { newPriceEntry?: Omit<PriceEntry, 'id'>, processQuantity?: number, editedPriceEntry?: PriceEntry } = {
       name,
       category: finalCategory as Category,
-      unit,
+      unit: normalizeUnit(unit),
       locations: Array.from(derivedLocations),
       notes,
-      inventoryEntries,
+      inventoryEntries: inventoryEntries.map(e => ({ ...e, unit: normalizeUnit(e.unit) })),
       inventoryQuantity: derivedInventoryQuant,
       shoppingQuantity: Number(shoppingQuantity) || 0,
       shoppingStore,
@@ -331,7 +334,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
         price: finalPrice,
         quantity: finalQuantity,
         store,
-        unitStr: priceUnit || unit || "",
+        unitStr: normalizeUnit(priceUnit || unit),
         ...(isDiscount ? {
           isDiscount: true,
           dealPrice: Number(dealPrice),
@@ -378,7 +381,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
           id: newId, 
           location: "", 
           quantity: 1, 
-          unit: unit || item?.unit || "",
+          unit: normalizeUnit(unit || item?.unit),
           dateBought: today,
           dateAdded: today
         }]);
@@ -404,7 +407,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                   newEntries.push({ ...e, quantity: remaining });
                   newEntries.push({ ...e, id: "temp-" + Date.now() + Math.random(), quantity: 1, isOpened: true, openedDate: new Date().toISOString().split('T')[0] });
              } else {
-                  newEntries.push({ ...e, [field]: value });
+                  newEntries.push({ ...e, [field]: field === 'unit' ? normalizeUnit(String(value)) : value });
              }
         } else {
             newEntries.push(e);
@@ -458,7 +461,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
         } else if (newMode === 'inventory') {
             setShoppingQuantity(0);
             if (inventoryEntries.length === 0) {
-                setInventoryEntries([{ id: Math.random().toString(36).substr(2, 9), location: "", quantity: 1, unit }]);
+                setInventoryEntries([{ id: Math.random().toString(36).substr(2, 9), location: "", quantity: 1, unit: normalizeUnit(unit) }]);
             }
         } else if (newMode === 'prices') {
             setShoppingQuantity(0);
