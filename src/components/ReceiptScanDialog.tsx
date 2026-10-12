@@ -1225,7 +1225,7 @@ export function ReceiptScanDialog({ isOpen, onOpenChange, existingItems, onImpor
                               type="button"
                               variant="outline"
                               size="sm"
-                              onClick={() => handleUpdateItem(item.id, "entries", [...(item.entries || []), { quantity: 1, unit: item.unit || "pcs", amount: undefined, location: "", dateBought: "", expiryDate: "", label: "", tags: [] }])}
+                              onClick={() => handleUpdateItem(item.id, "entries", [...(item.entries || []), { quantity: 1, unit: normalizeUnit(item.unit || "pcs"), amount: undefined, location: "", dateBought: "", expiryDate: "", label: "", tags: [] }])}
                               className="h-7 text-xs"
                             >
                               <Plus className="w-3 h-3 mr-1" /> Add Entry
