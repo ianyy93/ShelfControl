@@ -8,7 +8,7 @@ import { Textarea } from "./ui/textarea";
 import { X, Plus, Minus, Trash2, Split } from "lucide-react";
 import { GroceryItem, CATEGORIES, Category, InventoryEntry, PriceEntry, RestockPolicy } from "../types";
 import { deriveUnitPrice } from "../lib/receipt";
-import { normalizeUnit } from "../lib/units";
+import { normalizeUnit, amountPlaceholder } from "../lib/units";
 import { sumEntryQuantities } from "../lib/inventory";
 import { Badge } from "./ui/badge";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
@@ -711,7 +711,7 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                        <LocationSelect value={entry.location} onChange={v => updateInventoryEntry(entry.id, 'location', v)} locations={locations} className={selectStyles} />
                      </div>
                      <div className="space-y-1.5">
-                       <Label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Package count</Label>
+                       <Label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Packages</Label>
                        <div className="flex items-center gap-1.5">
                          <Button type="button" variant="outline" size="icon" className="h-8 w-8 shrink-0 border-gray-300" onClick={() => updateInventoryEntry(entry.id, 'quantity', Math.max(0.01, Number(entry.quantity) - 1))}>
                            <Minus className="w-3.5 h-3.5" />
@@ -730,13 +730,13 @@ export function ItemDialog({ item, existingItems, locations = [], isOpen, onOpen
                        </div>
                      </div>
                      <div className="space-y-1.5">
-                       <Label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{entry.unit === 'pcs' ? 'Pieces / package' : 'Amount / package'}</Label>
+                       <Label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{entry.unit === 'pcs' ? 'Pieces per package' : 'Amount per package'}</Label>
                        <Input 
                          type="number" step="any" min="0" 
                          value={entry.amount || ""} 
                          onChange={e => updateInventoryEntry(entry.id, 'amount', Number(e.target.value))} 
                          className="h-8 text-sm bg-white"
-                         placeholder="e.g. 500"
+                         placeholder={amountPlaceholder(entry.unit)}
                        />
                      </div>
                      <div className="space-y-1.5">

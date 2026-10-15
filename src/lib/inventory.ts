@@ -122,32 +122,80 @@ export function coerceEntriesToUnit(entries: InventoryEntry[], targetUnit?: stri
 }
 
 /**
+ * Apply a +/- delta to a single entry, amount-first for opened entries with
+ * a tracked per-package amount:
+ * - opened + tracked amount: delta adjusts the amount; if the amount would
+ *   drop to 0 or below, one package is finished instead (quantity - 1 and
+ *   the amount is cleared — the next package starts untracked)
+ * - otherwise: delta adjusts the whole-package count (quantity)
+ * Pure — returns a new entry.
+ */
+export function applyEntryDelta(entry: InventoryEntry, delta: number): InventoryEntry {
+  const tracked = entry.amount !== undefined && entry.amount !== null;
+  if (entry.isOpened && tracked) {
+    if (delta < 0) {
+      const newAmount = (Number(entry.amount) || 0) + delta;
+      if (newAmount > 0) {
+        return { ...entry, amount: newAmount };
+      }
+      return {
+        ...entry,
+        quantity: Math.max(0, (Number(entry.quantity) || 0) - 1),
+        amount: undefined,
+      };
+    }
+    return { ...entry, amount: (Number(entry.amount) || 0) + delta };
+  }
+  return { ...entry, quantity: Math.max(0, (Number(entry.quantity) || 0) + delta) };
+}
+
+/**
+ * Consume whole packages across entries, finishing opened entries (with
+ * tracked per-package amounts) before touching unopened package counts.
+ * Only entries matching `scope` are considered. Pure — returns new entries
+ * plus any unconsumed remainder.
+ */
+export function consumePackages(
+  entries: InventoryEntry[],
+  packages: number,
+  scope?: (e: InventoryEntry) => boolean
+): { entries: InventoryEntry[]; remaining: number } {
+  let remaining = Math.max(0, Math.floor(packages));
+  const result = entries.map((e) => ({ ...e }));
+  const inScope = scope ?? (() => true);
+
+  // Pass 1: finish opened entries with tracked amounts first.
+  for (const e of result) {
+    if (remaining <= 0) break;
+    if (!inScope(e)) continue;
+    const qty = Number(e.quantity) || 0;
+    if (qty <= 0) continue;
+    if (e.isOpened && e.amount !== undefined && e.amount !== null) {
+      const take = Math.min(qty, remaining);
+      e.quantity = qty - take;
+      e.amount = undefined;
+      remaining -= take;
+    }
+  }
+  // Pass 2: whole-package counts, in entry order.
+  for (const e of result) {
+    if (remaining <= 0) break;
+    if (!inScope(e)) continue;
+    const qty = Number(e.quantity) || 0;
+    if (qty <= 0) continue;
+    const take = Math.min(qty, remaining);
+    e.quantity = qty - take;
+    remaining -= take;
+  }
+  return { entries: result, remaining };
+}
+
+/**
  * Return a new entries array with the total package count reduced by
  * `packages` (whole packages). Walks entries in order, reducing quantity and
  * dropping zeroed entries. Pure — does not mutate the input.
  */
 export function consumeFromEntries(entries: InventoryEntry[], packages: number): InventoryEntry[] {
-  let remaining = Math.max(0, Math.floor(packages));
-  if (remaining <= 0) {
-    return [...entries];
-  }
-  const result: InventoryEntry[] = [];
-  for (const entry of entries) {
-    if (remaining <= 0) {
-      result.push(entry);
-      continue;
-    }
-    const qty = Number(entry.quantity) || 0;
-    if (qty <= 0) {
-      continue; // drop zeroed entries
-    }
-    if (qty > remaining) {
-      result.push({ ...entry, quantity: qty - remaining });
-      remaining = 0;
-    } else {
-      remaining -= qty;
-      // entry fully consumed — dropped
-    }
-  }
-  return result;
+  const { entries: result } = consumePackages(entries, packages);
+  return result.filter((e) => (Number(e.quantity) || 0) > 0);
 }

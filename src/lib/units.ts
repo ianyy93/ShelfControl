@@ -50,6 +50,75 @@ export function normalizeUnit(value?: string | null): string {
 }
 
 /**
+ * Display casing for canonical units ("ml" -> "mL", "l" -> "L").
+ * Custom units pass through as the user typed them.
+ */
+export function displayUnit(unit?: string | null): string {
+  const u = normalizeUnit(unit);
+  if (u === "ml") return "mL";
+  if (u === "l") return "L";
+  return u;
+}
+
+/** Known plural -> singular pairs for natural package units. */
+const KNOWN_PLURALS: Record<string, string> = {
+  bags: "bag",
+  boxes: "box",
+  bottles: "bottle",
+  heads: "head",
+  pieces: "piece",
+  counts: "count",
+  cartons: "carton",
+  cans: "can",
+  jars: "jar",
+  packs: "pack",
+  bundles: "bundle",
+  bars: "bar",
+  tubes: "tube",
+};
+
+/**
+ * Human display unit for a package count: "1 bag" / "2 bags",
+ * "1 box" / "2 boxes", "1 pc" / "2 pcs". Metric abbreviations
+ * (kg, g, mL, ...) never pluralize. Unknown units follow the pragmatic
+ * default: singularize a known plural when count is 1, otherwise append
+ * "s" unless the unit already ends in "s".
+ */
+export function pluralizeUnit(unit: string, count: number): string {
+  const u = normalizeUnit(unit);
+  if (u === "pcs") return count === 1 ? "pc" : "pcs";
+  if (u === "kg" || u === "g" || u === "lb" || u === "oz") return u;
+  if (u === "ml" || u === "l") return displayUnit(u);
+  if (count === 1) return KNOWN_PLURALS[u] ?? u;
+  if (u.endsWith("s")) return u;
+  if (/(x|sh|ch)$/.test(u)) return u + "es";
+  return u + "s";
+}
+
+/** Sensible per-unit placeholder for the "amount per package" input. */
+const AMOUNT_PLACEHOLDERS: Record<string, string> = {
+  g: "e.g. 500",
+  kg: "e.g. 2",
+  lb: "e.g. 1",
+  oz: "e.g. 8",
+  ml: "e.g. 500",
+  l: "e.g. 1",
+  pcs: "e.g. 12",
+};
+
+export function amountPlaceholder(unit?: string | null): string {
+  const raw = String(unit ?? "").trim();
+  if (!raw) return "e.g. 1";
+  return AMOUNT_PLACEHOLDERS[normalizeUnit(raw)] ?? "e.g. 1";
+}
+
+/** Format a unit value for display: rounds to 2 decimals, strips trailing zeros. */
+export function formatUnitValue(value: number): string {
+  if (!Number.isFinite(value)) return "";
+  const rounded = Math.round(value * 100) / 100;
+  return String(rounded);
+}
+/**
  * Convert a per-package amount from one unit to another.
  * Returns the converted value, or null when the units are incompatible
  * (e.g. pcs vs g) or the value is not a positive finite number.

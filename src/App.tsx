@@ -16,8 +16,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { ReceiptScanDialog } from "./components/ReceiptScanDialog";
 import { Sparkles, Receipt, GitMerge } from "lucide-react";
 import { buildReceiptPriceEntry, deriveUnitPrice } from "./lib/receipt";
-import { filterValidInventoryEntries, sumEntryQuantities, coerceEntriesToUnit } from "./lib/inventory";
-import { normalizeUnit } from "./lib/units";
+import { filterValidInventoryEntries, sumEntryQuantities, coerceEntriesToUnit, getTotalContent, applyEntryDelta, consumePackages } from "./lib/inventory";
+import { normalizeUnit, pluralizeUnit, displayUnit, formatUnitValue } from "./lib/units";
 import { getAvailableUnopenedStock, getEffectiveRestockTarget } from "./lib/restock";
 import { Badge } from "./components/ui/badge";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "./components/ui/accordion";
@@ -828,37 +828,24 @@ export default function App() {
         });
       }
     } else if (invDelta < 0) {
+      // Amount-first consume: finish opened entries (tracked per-package
+      // amounts) before touching unopened package counts. Location scoping
+      // is preserved: consume at the triggered location first, then anywhere.
       let remaining = Math.abs(invDelta);
-      
+
       if (locationTrigger) {
-         const trigLoc = locationTrigger === 'Unassigned' ? '' : locationTrigger;
-         for (let i = 0; i < newEntries.length; i++) {
-           if ((newEntries[i].location || '') === trigLoc) {
-             if (newEntries[i].quantity > remaining) {
-               newEntries[i].quantity -= remaining;
-               remaining = 0;
-               break;
-             } else {
-               remaining -= newEntries[i].quantity;
-               newEntries[i].quantity = 0;
-             }
-           }
-         }
+        const trigLoc = locationTrigger === 'Unassigned' ? '' : locationTrigger;
+        const scoped = consumePackages(newEntries, remaining, (e) => (e.location || '') === trigLoc);
+        newEntries = scoped.entries;
+        remaining = scoped.remaining;
       }
 
       if (remaining > 0) {
-          for (let i = 0; i < newEntries.length; i++) {
-            if (newEntries[i].quantity > remaining) {
-              newEntries[i].quantity -= remaining;
-              remaining = 0;
-              break;
-            } else {
-              remaining -= newEntries[i].quantity;
-              newEntries[i].quantity = 0;
-            }
-          }
+        const unscoped = consumePackages(newEntries, remaining);
+        newEntries = unscoped.entries;
+        remaining = unscoped.remaining;
       }
-      newEntries = newEntries.filter(e => e.quantity > 0);
+      newEntries = newEntries.filter((e) => (Number(e.quantity) || 0) > 0);
     }
     
     const newLocs = Array.from(new Set(newEntries.map(e => e.location).filter(Boolean)));
@@ -1076,15 +1063,11 @@ export default function App() {
     for (const e of (item.inventoryEntries || [])) {
         if (e.id === entryId) {
             isModified = true;
-            if (e.isOpened && e.unit === 'pcs') {
-                // If it's opened and unit is pcs, +/- modifies the amount (e.g. number of pieces left)
-                const newAmount = Math.max(0, (e.amount || 0) + delta);
-                newEntries.push({ ...e, amount: newAmount });
-            } else {
-                 newEntries.push({ ...e, quantity: Math.max(0, e.quantity + delta) });
-            }
+            // Amount-first: opened entries with a tracked per-package amount
+            // adjust the amount; the package drops when the amount hits 0.
+            newEntries.push(applyEntryDelta(e, delta));
         } else {
-            newEntries.push(e);
+            newEntries.push({ ...e });
         }
     }
     
@@ -1674,6 +1657,11 @@ export default function App() {
               openedPcsText = `, ${totalPcs} pcs`;
           }
 
+          const totalContent = getTotalContent({ inventoryEntries: relevantEntries });
+          const totalContentText = totalContent
+              ? ` · ${formatUnitValue(totalContent.value)} ${displayUnit(totalContent.unit)} total`
+              : "";
+
           const isThisGroupBatch = batchModeGroup === group.name;
           const itemRelevantEntries = (item.inventoryEntries || []).filter(e => (e.location || 'Unassigned') === group.name || (!e.location && group.name === 'Unassigned'));
           const isSelected = itemRelevantEntries.length > 0 && itemRelevantEntries.every(e => batchSelected[`${item.id}_${e.id}`]);
@@ -1770,7 +1758,7 @@ export default function App() {
               <div className="flex flex-col items-end gap-1 shrink-0">
                 {isThisGroupBatch ? (
                   <span className="text-xs font-semibold text-blue-700 bg-blue-50 px-2 py-1 rounded-md border border-blue-100/60 mt-1">
-                    {displayInventoryQuantity} {item.unit || "ct"}
+                    {displayInventoryQuantity} {pluralizeUnit(item.unit || "pcs", displayInventoryQuantity)}
                   </span>
                 ) : (
                   <div className="flex items-center gap-2" onClick={(e) => { if (!expandedItems[item.id!]) { e.stopPropagation(); toggleExpanded(item.id!); } }}>
@@ -1778,14 +1766,14 @@ export default function App() {
                       <Minus className="w-4 h-4" />
                     </Button>
                     <span className="text-lg font-bold text-gray-900 text-center min-w-[2rem]">
-                      {displayInventoryQuantity} <span className="text-[10px] text-gray-500 font-normal block -mt-1">{item.unit || "ct"}{openedPcsText}</span>
+                      {displayInventoryQuantity} <span className="text-[10px] text-gray-500 font-normal block -mt-1">{pluralizeUnit(item.unit || "pcs", displayInventoryQuantity)}{openedPcsText}{totalContentText}</span>
                     </span>
                     <Button variant="outline" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); updateQuantities(item, 1, 0, effectiveGroupBy === 'location' ? group.name : undefined); }}>
                       <Plus className="w-4 h-4" />
                     </Button>
                   </div>
                 )}
-                {item.shoppingQuantity > 0 && <span className="text-xs text-blue-600 font-medium">+{item.shoppingQuantity} {item.unit || ""} to buy</span>}
+                {item.shoppingQuantity > 0 && <span className="text-xs text-blue-600 font-medium">+{item.shoppingQuantity} {pluralizeUnit(item.unit || "pcs", item.shoppingQuantity)} to buy</span>}
                 {!isThisGroupBatch && (
                   <div className="flex gap-1 mt-1 -mr-2">
                     <Button variant="ghost" size="icon" className="h-10 w-10 text-gray-400 hover:text-blue-600" onClick={(e) => { e.stopPropagation(); setEditingItem(item); setIsDialogOpen(true); }}>
@@ -1873,7 +1861,7 @@ export default function App() {
                         <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, -1); }} title="Decrease count">
                            <Minus className="w-3.5 h-3.5" />
                         </Button>
-                        <span className="text-sm font-medium w-6 text-center text-gray-800">{entry.isOpened && entry.unit === 'pcs' ? (entry.amount || 0) : entry.quantity}</span>
+                        <span className="text-sm font-medium w-6 text-center text-gray-800">{(entry.isOpened && entry.amount !== undefined && entry.amount !== null) ? entry.amount : entry.quantity}</span>
                         <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, 1); }} title="Increase count">
                            <Plus className="w-3.5 h-3.5" />
                         </Button>
@@ -2341,6 +2329,11 @@ export default function App() {
                     openedPcsText = `, ${totalPcs} pcs`;
                 }
 
+                const totalContent = getTotalContent({ inventoryEntries: relevantEntries });
+                const totalContentText = totalContent
+                    ? ` · ${formatUnitValue(totalContent.value)} ${displayUnit(totalContent.unit)} total`
+                    : "";
+
                 let priceInsights = null;
                 if (isShoppingList && item.priceHistory && item.priceHistory.length > 0) {
                   const sortedPrices = [...item.priceHistory].sort((a, b) => b.date.localeCompare(a.date));
@@ -2517,7 +2510,7 @@ export default function App() {
                               <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, -1); }} title="Decrease count">
                                  <Minus className="w-3.5 h-3.5" />
                               </Button>
-                              <span className="text-sm font-medium w-6 text-center text-gray-800">{entry.isOpened && entry.unit === 'pcs' ? (entry.amount || 0) : entry.quantity}</span>
+                              <span className="text-sm font-medium w-6 text-center text-gray-800">{(entry.isOpened && entry.amount !== undefined && entry.amount !== null) ? entry.amount : entry.quantity}</span>
                               <Button variant="outline" size="icon" className="h-6 w-6 text-gray-500 border-gray-300" onClick={(e) => { e.stopPropagation(); updateEntryQuantity(item, entry.id, 1); }} title="Increase count">
                                  <Plus className="w-3.5 h-3.5" />
                               </Button>
@@ -2539,7 +2532,7 @@ export default function App() {
                           <Button variant="outline" size="icon" className="h-6 w-6" onClick={() => updateQuantities(item, 0, -1)}>
                             <Minus className="w-3 h-3" />
                           </Button>
-                          <span className="text-sm font-medium w-5 text-center">{item.shoppingQuantity} <span className="text-[10px] text-gray-500 font-normal">{item.unit}</span></span>
+                          <span className="text-sm font-medium w-5 text-center">{item.shoppingQuantity} <span className="text-[10px] text-gray-500 font-normal">{pluralizeUnit(item.unit || "pcs", item.shoppingQuantity)}</span></span>
                           <Button variant="outline" size="icon" className="h-6 w-6" onClick={() => updateQuantities(item, 0, 1)}>
                             <Plus className="w-3 h-3" />
                           </Button>
@@ -2555,7 +2548,7 @@ export default function App() {
                           <Button variant="outline" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); updateQuantities(item, -1, 0, groupBy === 'location' ? group.name : undefined); }}>
                             <Minus className="w-3 h-3" />
                           </Button>
-                          <span className="text-sm font-medium whitespace-nowrap text-center cursor-pointer">{displayInventoryQuantity} <span className="text-xs text-gray-500 font-normal">{item.unit || "count"}{openedPcsText}</span></span>
+                          <span className="text-sm font-medium whitespace-nowrap text-center cursor-pointer">{displayInventoryQuantity} <span className="text-xs text-gray-500 font-normal">{pluralizeUnit(item.unit || "pcs", displayInventoryQuantity)}{openedPcsText}{totalContentText}</span></span>
                           <Button variant="outline" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); updateQuantities(item, 1, 0, groupBy === 'location' ? group.name : undefined); }}>
                             <Plus className="w-3 h-3" />
                           </Button>
